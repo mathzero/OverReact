@@ -7,9 +7,9 @@ An R package created to conduct analysis and visualisation of data in the Imperi
 Wrangle and clean data
 
 ### 2. Make_OR_Tables
-Create tables of odds ratios based on GLMs. ALso create GAM models
+Create tables of odds ratios based on GLMs, ALso create GAM models
 
-### 3. make_cross_tabs
+### 3. make_cross_tabs
 Create cross tabs with percentages and confidence intervals
 
 ### 4. make_prevalence_tables
