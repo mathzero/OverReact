@@ -16,8 +16,10 @@
 
 ### Save table / dataframe
 
-saveREACTtable <- function(tab,outpath,filename){
-  saveRDS(tab,paste0(outpath, filename,".rds"))
+saveREACTtable <- function(tab,outpath,filename,save_rds=F){
+  if(save_rds){
+    saveRDS(tab,paste0(outpath, filename,".rds"))
+  }
   write_csv(tab,paste0(outpath, filename,".csv"))
 }
 

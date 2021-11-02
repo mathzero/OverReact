@@ -58,7 +58,7 @@ modelMakerSequential <- function(variable_name, data=dfRes,
 
     for (i in 1:length(joint_adjustment_vars)){
 
-      paste0("Now processing additional covariate:", joint_adjustment_vars[i])
+      print(paste0("Now processing additional covariate:", joint_adjustment_vars[i]))
 
       ### adjusted for age and gender
       f <- as.formula(paste(outcome," ~", paste(unique(c(variable_name,joint_adjustment_vars[1:i])),
@@ -84,23 +84,27 @@ modelMakerSequential <- function(variable_name, data=dfRes,
     }
 
     ### Now we add all the models together into one big DF
-    df.output=data.frame(Level=mod.results.list[[length(mod.results.list)]]$Level)
-    df.output$crude_mode_OR <- c(paste0(tab_univ$OR, " [",tab_univ$Lower, "-",tab_univ$Upper, "]"),
-                                 rep(NA_character_, nrow(df.output)- nrow(tab_univ)))
+    df.output=data.frame(Level=mod.results.list[[1]]$Level)
+    df.output$crude_mod_OR <- c(paste0(tab_univ$OR, " [",tab_univ$Lower, "-",tab_univ$Upper, "]"),
+                                rep(NA_character_, nrow(df.output)- nrow(tab_univ)))
 
     names(mod.results.list.forplot)  <- joint_adjustment_vars
     mod.results.list.forplot$crude <- tab_univ
 
 
     for (i in 1:length(joint_adjustment_vars)){
-      df.output[,paste0("plus_", joint_adjustment_vars[[i]])] <- c(paste0(mod.results.list[[i]]$OR, " [",mod.results.list[[i]]$Lower, "-",
-                                                                          mod.results.list[[i]]$Upper, "]"),
-                                                                   rep(NA_character_, nrow(df.output)- nrow(mod.results.list[[i]])))
+      print(i)
+      mod.results.list[[i]]$OR_concat <- c(paste0(mod.results.list[[i]]$OR, " [",mod.results.list[[i]]$Lower, "-",
+                                                  mod.results.list[[i]]$Upper, "]"))
+
+      df.output <- plyr::join(df.output, mod.results.list[[i]] %>% dplyr::select(Level, OR_concat),
+                              by="Level", type = "left", match = "first")
+      names(df.output)[i+2]=paste0("plus_", joint_adjustment_vars[[i]])
 
     }
 
   }
-  df.output.abbrev <- df.output[complete.cases(df.output),]
+  df.output.abbrev <- df.output
 
   return(list(model_df=df.output,
               model_df_predictorORs_only = df.output.abbrev,

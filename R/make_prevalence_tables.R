@@ -37,8 +37,7 @@ makeTablesNew <- function(dat = dfRes,
       print(paste0("These covariates are not supplied in your cov_name_list:",covariates[ind]))
       print("Using simple variable name instead")
     }else{
-      ind <- rep(T,length(names(cov_name_list)))
-
+      ind <- rep(F,length(covariates))
     }
   }
 
@@ -55,7 +54,7 @@ makeTablesNew <- function(dat = dfRes,
       tab <- table( pull(dat, result_var),  pull(dat, covariates[i]))
     }
     else{
-      tab <- round(wtd.table(x=pull(dat, result_var),
+      tab <- round(questionr::wtd.table(x=pull(dat, result_var),
                              y=pull(dat, covariates[i]),
                              weights = pull(dat, weights),
                              normwt = F,
@@ -91,7 +90,8 @@ makeTablesNew <- function(dat = dfRes,
     ### Determine variable name to use
     if(!is.null(cov_name_list)){
       if(!ind[[i]]){
-        cvname <- cov_name_list[covariates[i]]}else{
+        cvname <- cov_name_list[covariates[i]]
+        }else{
           cvname <- covariates[i]
         }
     }else{
@@ -259,5 +259,19 @@ add_conf_ints <- function(tab,method="wilson",poscol="Detected",negcol="Not Dete
 }
 
 
+
+
+# Turn prevalence tables into pivoted plottable dfs -----------------------
+
+makeStratifiedPrevalenceTablePlottable <- function(tab){
+  pivot_cols=setdiff(colnames(tab), c("Variable", "Category"))
+  tab_pivot=tidyr::pivot_longer(data = tab, cols=pivot_cols)
+  tab_pivot$prev <- as.numeric(gsub(" [(].*", "",tab_pivot$value))
+  tab_pivot$lower <- xtabPercentageExtractor(mystring = tab_pivot$value,lookbehind = "[(]",
+                                             lookahead = "[-]",return_numeric = T)
+  tab_pivot$upper <- xtabPercentageExtractor(mystring = tab_pivot$value,lookbehind = "[-]",
+                                             lookahead = "[)]",return_numeric = T)
+  return(tab_pivot)
+}
 
 
