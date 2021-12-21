@@ -20,7 +20,8 @@ makeTablesNew(
   for_report = FALSE,
   write_to_file = FALSE,
   percent = TRUE,
-  output_list = TRUE
+  output_list = TRUE,
+  separator = ","
 )
 }
 \description{
