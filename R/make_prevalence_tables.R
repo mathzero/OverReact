@@ -6,10 +6,15 @@
 #'
 #'
 
-
-### helper function
-# quick function to make sure 2dp always shown
-specifyDecimal <- function(x,k) trimws(format(round(x,k),nsmall=k))
+#
+# ### helper function
+# # quick function to make sure 2dp always shown
+# # specifyDecimal <- function(x,k) trimws(format(round(x,k),nsmall=k))
+# specifyDecimal <- function(x,k){
+#   out <- formatC(signif(x = x,digits = k),digits = k,format = "fg",flag = "#")
+#   out <- gsub('^\\.|\\.$','',out)
+#   return(out)
+# }
 
 
 #' Make prevalence tables
@@ -27,7 +32,8 @@ makeTablesNew <- function(dat = dfRes,
                           for_report = FALSE,
                           write_to_file = FALSE,
                           percent = TRUE,
-                          output_list=TRUE
+                          output_list=TRUE,
+                          separator=","
 ){
 
   ### Check cov_name_list
@@ -104,10 +110,10 @@ makeTablesNew <- function(dat = dfRes,
       df <- as.data.frame.matrix(tab_ci) %>%
         dplyr::mutate(Variable = as.character(unlist(cvname)),
                       Category =  rownames(tab_ci),
-                      p = paste0(specifyDecimal(p*100, sf)," [",specifyDecimal(lb*100, sf),"-",specifyDecimal(ub*100, sf),"]"),
-                      p_adj = paste0(specifyDecimal(p_adj*100, sf)," [",specifyDecimal(lb_adj*100, sf),"-",specifyDecimal(ub_adj*100,sf),"]")) %>%
+                      p = paste0(specifyDecimal(p*100, sf)," (",specifyDecimal(lb*100, sf),separator,specifyDecimal(ub*100, sf),")"),
+                      p_adj = paste0(specifyDecimal(p_adj*100, sf)," (",specifyDecimal(lb_adj*100, sf),separator,specifyDecimal(ub_adj*100,sf),")")) %>%
         dplyr::select(Variable, Category, `1`, all, p, p_adj) %>%
-        dplyr::rename("Positive" = "1", "Total" = "all", "Prevalence"=p,"Prevalence_adjusted" = "p_adj",
+        dplyr::rename("Positive" = "1", "Total" = "all", "Prevalence"=p,"Prevalence_adjusted" = "p_adj"
         )
     } else{
       if(percent){
@@ -176,7 +182,8 @@ stratifiedTables <- function(dat = dfRes,
                              write_to_file = FALSE,
                              percent = TRUE,
                              output_list=TRUE,
-                             include_counts=F){
+                             include_counts=F,
+                             separator=","){
 
   if(class(pull(dat, strat_var)) == "factor"){
     uniques=levels(pull(dat, strat_var))
@@ -189,8 +196,8 @@ stratifiedTables <- function(dat = dfRes,
     prevs <- makeTablesNew(dat=dat[dat[,strat_var]== uniques[[i]],],
                            result_var = result_var, covariates = covariates,
                            sens = sens,spec = spec, cov_name_list = cov_name_list,
-                           output_list = F, sf = sf, weights = weights)
-    prevs$prev_concat <- paste0(prevs$Prevalence," (",prevs$Lower,"-", prevs$Upper,")")
+                           output_list = F, sf = sf, weights = weights,separator = separator)
+    prevs$prev_concat <- paste0(prevs$Prevalence," (",prevs$Lower,separator, prevs$Upper,")")
     result_list[[i]] <- prevs
   }
   names(result_list) <- uniques
@@ -268,10 +275,70 @@ makeStratifiedPrevalenceTablePlottable <- function(tab){
   tab_pivot=tidyr::pivot_longer(data = tab, cols=pivot_cols)
   tab_pivot$prev <- as.numeric(gsub(" [(].*", "",tab_pivot$value))
   tab_pivot$lower <- xtabPercentageExtractor(mystring = tab_pivot$value,lookbehind = "[(]",
-                                             lookahead = "[-]",return_numeric = T)
-  tab_pivot$upper <- xtabPercentageExtractor(mystring = tab_pivot$value,lookbehind = "[-]",
+                                             lookahead = "[,]",return_numeric = T)
+  tab_pivot$upper <- xtabPercentageExtractor(mystring = tab_pivot$value,lookbehind = "[,]",
                                              lookahead = "[)]",return_numeric = T)
   return(tab_pivot)
 }
 
+
+
+# Reorder tables nicely ---------------------------------------------------
+
+
+
+
+orderMyTable <-  function(tab){
+  out.list <- list()
+
+  if("Level" %in% colnames(tab)){
+    tab$Category <-  tab$Level
+  }
+  # define some common lists of categories #
+  freqs=stringr::word(c("All the time","Some of the time","Hardly ever","Never","Don't know"),1)
+  ynpns=stringr::word(c("Yes", "No", "Prefer not to say"),1)
+  yn=stringr::word(c("Yes", "No"),1)
+  fags = stringr::word(c("Current cigarette smoker","Not current cigarette smoker","Prefer not to say"),1)
+  vapes = stringr::word(c("Current vaper","Not current vaper","Prefer not to say"),1)
+  covid = stringr::word(c("COVID confirmed by test","COVID suspected by doctor",
+                          "COVID suspected by respondent","No COVID"),-1)
+  adiposity = stringr::word(c("Underweight","Normal weight","Overweight", "Obese"),1)
+
+  catslist=c(freqs,ynpns,yn, fags, vapes, covid)
+  # done #
+
+
+  for(i in 1:length(unique(tab$Variable))){
+    varr=unique(tab$Variable)[[i]]
+    df_subset <- tab %>% filter(Variable == varr)
+    levs=stringr::word(unique(df_subset$Category),1)
+
+    mycats = stringr::word(df_subset$Category,1)
+
+    if(grepl("age",tolower(varr)) | grepl("imd",tolower(varr))){
+      x <- gsub("^(.*?)[[:punct:]].*","\\1",tab$Category[tab$Variable == varr])
+      out.list[[varr]] <- df_subset[order(as.numeric(x)),]
+    }else if(length(setdiff(levs,ynpns))==0){
+      out.list[[varr]] <-df_subset[order(match(mycats,ynpns)),]
+    }else if(length(setdiff(levs,yn))==0){
+      out.list[[varr]] <-df_subset[order(match(mycats,yn)),]
+    }else if(length(setdiff(levs,freqs))==0){
+      out.list[[varr]] <-df_subset[order(match(mycats,freqs)),]
+    }else if(length(setdiff(levs,fags))==0){
+      out.list[[varr]] <-df_subset[order(match(mycats,fags)),]
+    }else if(length(setdiff(levs,vapes))==0){
+      out.list[[varr]] <-df_subset[order(match(mycats,vapes)),]
+    }else if(length(setdiff(levs,covid))==0){
+      out.list[[varr]] <-df_subset[order(match(stringr::word(df_subset$Category,-1),
+                                               covid)),]
+    }else if(length(setdiff(levs,adiposity))==0){
+      out.list[[varr]] <-df_subset[order(match(stringr::word(df_subset$Category,-1),
+                                               adiposity)),]
+    }else{
+      out.list[[varr]] <- df_subset
+    }
+  }
+  out <- bind_rows(out.list)
+  return(out)
+}
 

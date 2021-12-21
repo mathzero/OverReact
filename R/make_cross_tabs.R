@@ -31,7 +31,6 @@ comma_sep=scales::label_comma(accuracy = 1,big.mark = ",", decimal.mark = ".")
 
 
 # Simple cross-tab function, with %s
-
 crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
                      colvar_levels = NULL, confint =T,include_percentages=T,
                      rowwise_precentages = T, weights=NULL, comma_thousands = F,
@@ -47,7 +46,7 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
                            weights = pull(dat, weights),
                            normwt = F,
                            na.rm = T,
-                           na.show = F),0)) %>% as.data.frame.matrix()
+                           na.show = F),0))
   }
 
   # statstical test
@@ -164,6 +163,7 @@ crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=cov_name_l
                           comma_thousands = F, statistical_test = F){
   res_list <- list()
   for (i in 1:length(rowvar_list)){
+    print(paste0("Processing ",rowvar_list[[i]]))
     if(class(pull(dat, rowvar_list[[i]])) %in% c("integer", "numeric") &
        !all(names(table(pull(dat, rowvar_list[[i]]))) %in% c("0", "1"))){
       res <- crossTabContinuous(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar)

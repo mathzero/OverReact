@@ -2,5 +2,11 @@
 
 
 ### helper function
-# quick function to make sure 2dp always shown
-specifyDecimal <- function(x,k) trimws(format(round(x,k),nsmall=k))
+specifyDecimal <- function(x,k, format = "fg"){
+  out <- formatC(signif(x = x,digits = k),digits = k,format = format,flag = "#")
+  out <- gsub('^\\.|\\.$','',out)
+  return(out)
+}
+
+
+# class(specifyDecimal(0.1,2,format="fg"))

@@ -24,13 +24,15 @@ saveREACTtable <- function(tab,outpath,filename,save_rds=F){
 }
 
 ### save plot
-saveREACTplot <- function(p,figpath,filename, width,height){
-  ggsave(filename = paste(filename,".png"),plot = p,
+saveREACTplot <- function(p,figpath,filename, width,height, savePDF=T){
+  ggsave(filename = paste0(filename,".png"),plot = p,
          path = figpath, width = width,height = height,dpi = 300,units = "in"
          )
-  ggsave(filename = paste(filename,".pdf"),plot = p,
-         path = figpath, width = width,height = height,units = "in"
-  )
+  if(savePDF){
+    ggsave(filename = paste0(filename,".pdf"),plot = p,
+           path = figpath, width = width,height = height,units = "in"
+    )
+  }
 }
 
 
