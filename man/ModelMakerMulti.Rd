@@ -10,6 +10,8 @@ ModelMakerMulti(
   dat = dfRes,
   list_of_variables_of_interest,
   outcome = "res",
+  sf = 2,
+  format = "f",
   joint_adjustment_vars = c("age_group_named", "sex", "region_named", "ethnic_new",
     "imd_quintile_cat"),
   cov_name_list = NULL

@@ -29,7 +29,7 @@ theme_react <- function(base_family = "IBM Plex Sans",
       legend.key =element_rect(fill = "transparent", colour = NA),
       strip.background = element_rect(fill = "white",size = 0.2),
       axis.text = element_text(size = 8),
-      strip.text = element_text(face = "bold",size = strip_text_size,margin = margin(rep(2,4)),
+      strip.text = element_text(face = "bold",size = strip_text_size,margin = ggplot2::margin(rep(2,4)),
                                 family="IBM Plex Sans SemiBold"),
 
       # # from Silge
@@ -37,10 +37,10 @@ theme_react <- function(base_family = "IBM Plex Sans",
       #                                         margin=margin(b=strip_text_margin),
       #                                         family="IBM Plex Sans Medium"),
       plot.subtitle = ggplot2::element_text(hjust = 0, size=subtitle_size,
-                                                 margin=margin(b=subtitle_margin),
+                                                 margin=ggplot2::margin(b=subtitle_margin),
                                                  family="IBM Plex Sans"),
       plot.title = ggplot2::element_text(hjust = 0, size = plot_title_size,
-                                              margin=margin(b=plot_title_margin),
+                                              margin=ggplot2::margin(b=plot_title_margin),
                                               family="IBM Plex Sans SemiBold")
     )
 

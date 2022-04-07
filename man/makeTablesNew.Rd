@@ -2,8 +2,9 @@
 % Please edit documentation in R/make_prevalence_tables.R
 \name{makeTablesNew}
 \alias{makeTablesNew}
-\title{Make prevalence tables
-for instances where there are only zeros or ones in the results (ie all pos or all neg)}
+\title{Function created on 23-2-2021 by Matt Whitaker, to work with new wrangling system for REACT-2
+cov_name_list can be found in cats_and_covs.R and is a named list of all useful covariates in react2
+Any named list of covariates with variable descriptions will work here, or the function will work without}
 \usage{
 makeTablesNew(
   dat = dfRes,
@@ -25,6 +26,9 @@ makeTablesNew(
 )
 }
 \description{
+Relies on Kylie's add_conf_ints function
+}
+\details{
 Make prevalence tables
 for instances where there are only zeros or ones in the results (ie all pos or all neg)
 }

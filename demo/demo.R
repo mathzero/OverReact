@@ -16,14 +16,15 @@ fonttab <- fonttable()
 # make dummy data
 n=10000
 df <- data.frame(y=sample(c(0,1),size = n,replace = T),
-                 x1=rnorm(n = n,mean = 0,sd = 1),
+                 x1=runif(n = n,min = 0,max = 1),
                  x2=rnorm(n = n,mean = 0,sd = 1),
                  x3=rnorm(n = n,mean = 0,sd = 1),
                  x4=rnorm(n = n,mean = 0,sd = 1),
                  x5=rnorm(n = n,mean = 0,sd = 1),
                  x6=rnorm(n = n,mean = 0,sd = 1),
                  z=as.factor(rep("A",n)),
-                 w=as.factor(sample(c("A","B"),size = n,replace = T))
+                 w=as.factor(sample(c("A","B"),size = n,replace = T)),
+                 v=as.factor(sample(c("A","B","C"),size = n,replace = T))
                  )
 df$x1=df$x1+abs(df$x1*df$y)
 df$w[df$y==1 & sample(c(T,F),size = n,replace = T,prob = c(0.05,0.95))] <- "A"
@@ -57,43 +58,17 @@ univ_df_plot %>% ggplot(aes(OR,Lower, col = model))+
 #         plot.subtitle = element_text(family = "IBM Plex Sans"))
 
 
+# Cross tabs --------------------------------------------------------------
 
-joint_adjustment_vars = predictor_vars
-sf = 2
-list_of_variables_of_interest = predictor_vars
-format = "f"
-outcome="y"
-variable_name="z"
-data=df
+tab=crossTab(dat = df,rowvar = "v",colvar = "w",separator = "-")
+tab_cont=crossTabContinuous(dat = df,rowvar = "x1",colvar = "w")
 
-fonttab <- fonttable()
+tabmulti=crossTabMulti(dat = df,rowvar_list = c("x1", "v"),colvar = "w",cov_names=NULL)
 
-getwd()
+tabmulti_w=crossTabMulti(dat = df,rowvar_list = c("x1", "v"),colvar = "w",cov_names=NULL,weights = "x1")
 
-library(extrafont)
-extrafont::font_import(paths = "C:/Windows/Fonts/",
-                       recursive = T,prompt = F)
-suppressWarnings(extrafont::loadfonts(device = "win",quiet = T))
-# extrafont::font_install(fontpkg = hrbrthemes::font_ps,prompt = F)
 
-loadfonts(quiet = T,device ="win")
-extrafont::font_import(prompt = F)
 
-load_packages <- function(package.list){
-  new.packages <- package.list[!(package.list %in% installed.packages()[,"Package"])]
-  print(paste(length(new.packages), "packages require installation. Installing now"))
-  if(length(new.packages)) install.packages(new.packages, repos="http://se-r.sm.med.ic.ac.uk", dependencies = TRUE)
-  print("Loading packages")
-  lapply(package.list, require, character.only=TRUE)
-}
-windowsFonts("IBMPlexSans-Medium" = windowsFont("IBMPlexSans-Medium"),
-             "IBMPlexSans-Bold" = windowsFont("IBMPlexSans-Bold"),
-             "IBMPlexSans" = windowsFont("IBMPlexSans"))
-
-windowsFonts()$IBMPlexSans
-
-list.files("//se-transfer-i/react_s/mw418")
-devtools::install_local("//se-transfer-i/react_s/mw418/Rttf2pt1_1.3.8.tar.gz")
 
 
 

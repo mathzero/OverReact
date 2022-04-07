@@ -26,91 +26,154 @@
 
 # Cross tab function (generalisible) --------------------------------------
 
+
+
+
+#### HELPERS ####
+
 # FIrst a helper function to inset comma separators
 comma_sep=scales::label_comma(accuracy = 1,big.mark = ",", decimal.mark = ".")
+
+# Another helper function to generate confidence intervals from proportion tables
+
+# function to generate CIs (takes tab with margins)
+getPercentageCIs <- function(tab_margin,rowwise_precentages=T, separator = "-"){
+  tab_prop_ci = data.frame()
+
+  for (i in 1:(nrow(tab_margin))){
+    for(j in 1:(ncol(tab_margin)-1)){
+      if(rowwise_precentages){
+        ci <- prevalence::propCI(x=as.numeric(tab_margin[i,j]), n = as.numeric(tab_margin[i,ncol(tab_margin)]), method = "wilson")
+      }else{
+        ci <- prevalence::propCI(x=as.numeric(tab_margin[i,j]), n = as.numeric(tab_margin[nrow(tab_margin),j]), method = "wilson")
+      }
+      tab_prop_ci[i,j] <-  paste0(tab_prop[i,j],"% [",specifyDecimal(100*ci$lower,sf),separator,specifyDecimal(100*ci$upper,sf),"]")
+    }
+  }
+  colnames(tab_prop_ci) <- colnames(tab_margin)[1:(ncol(tab_margin)-1)]
+
+  return(tab_prop_ci)
+}
+
+
+
+#### MAIN FUNCTIONS ####
+
+
 
 
 # Simple cross-tab function, with %s
 crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
                      colvar_levels = NULL, confint =T,include_percentages=T,
-                     rowwise_precentages = T, weights=NULL, comma_thousands = F,
-                     statistical_test = F){
+                     percentages_only=F,
+                     rowwise_precentages = T,
+                     weights=NULL, comma_thousands = F,
+                     statistical_test = F,
+                     separator="-",
+                     sf=3){
 
-  # weights
-  if(is.null(weights)){
-    tab <- (table(pull(dat,rowvar), pull(dat,colvar)))
-  }
-  else{
+
+
+
+  # get unweighted table
+  tab <- (table(pull(dat,rowvar), pull(dat,colvar)))
+
+  if(!is.null(weights)){
+    # get weighted table
     tab <- (round(questionr::wtd.table(x=pull(dat,rowvar),
-                           y= pull(dat,colvar),
-                           weights = pull(dat, weights),
-                           normwt = F,
-                           na.rm = T,
-                           na.show = F),0))
+                                       y= pull(dat,colvar),
+                                       weights = pull(dat, weights),
+                                       normwt = F,
+                                       na.rm = T,
+                                       na.show = F),0))
   }
 
-  # statstical test
+  # Get p-value
   if(statistical_test){
     pval=chisq.test(tab)
-
   }
-  # add margins
-  tab=tab %>% addmargins() %>% as.data.frame.matrix()
 
-  # tab <- addmargins(table(pull(dat,rowvar), pull(dat,colvar))) %>% as.data.frame.matrix()
+
+
+  # Get tab with margins
+  tab_margin=as.data.frame.matrix(addmargins(tab))
+
+  # we probably never want the rowsums so we'll take them off
+  tab_margin <- tab_margin[1:(nrow(tab_margin)-1),]
+
+
+
+  # Get proportions tab
   if(rowwise_precentages){
-    tab.prop <- round(100*prop.table(table(pull(dat,rowvar), pull(dat,colvar)),1),1) %>% as.data.frame.matrix()
+    tab_prop <- round(100*prop.table(tab,1),1) %>% as.data.frame.matrix()
   }else{
-    tab.prop <- round(100*prop.table(table(pull(dat,rowvar), pull(dat,colvar)),2),1) %>% as.data.frame.matrix()
+    tab_prop <- round(100*prop.table(tab,2),1) %>% as.data.frame.matrix()
   }
-  tab_bu <- tab
+
+
+
+  # generate CI table
+  tab_prop_ci <- getPercentageCIs(tab_margin,rowwise_precentages=T,separator=separator )
+  tab_prop_ci
+
+
+  # switch tab for comma thousands tab now if needed
   if(comma_thousands){
-    tabcomma=lapply(tab, comma_sep) %>% as.data.frame()
+    tabcomma= matrix(data = lapply(tab, comma_sep),nrow = nrow(tab),ncol=ncol(tab))
     colnames(tabcomma)= colnames(tab)
     tab=tabcomma
   }
-  if(include_percentages){
-    if(confint){
-      for (i in 1:(nrow(tab))){
-        for(j in 1:(ncol(tab)-1)){
-          if(rowwise_precentages){
-            ci <- prevalence::propCI(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[i,ncol(tab_bu)]), method = "wilson")
-          }else{
-            ci <- prevalence::propCI(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[nrow(tab_bu),j]), method = "wilson")
-          }
-          tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$p,1),"%, [",round(100*ci$lower,1),"-",round(100*ci$upper,1),"])")
-        }
-      }
-    }else{
-      for (i in 1:(nrow(tab)-1)){
-        for(j in 1:(ncol(tab)-1)){
-          tab[i,j] <-  paste0(tab[i,j], " (",tab.prop[i,j],"%)")
-        }
-      }
-      for(j in 1:ncol(tab)){
-        prop <- round(100*(as.numeric(tab_bu[nrow(tab),j]) / as.numeric(tab_bu[nrow(tab),ncol(tab)])),1)
-        tab[nrow(tab),j] <-  paste0(tab[nrow(tab),j], " (",prop,"%)")
-      }
+
+  # Loop and add in required
+  tab_out=data.frame()
+  for (i in 1:(nrow(tab))){
+    for(j in 1:(ncol(tab))){
+      tab_out[i,j] <-  case_when(percentages_only & confint ~ tab_prop_ci[i,j],
+                                 percentages_only ~ paste0(tab_prop[i,j],"%"),
+                                 include_percentages & confint~ paste0(tab[i,j], " (", tab_prop_ci[i,j],")"),
+                                 include_percentages ~ paste0(tab[i,j], " (",tab_prop[i,j],"%)"),
+                                 T ~ as.character(tab[i,j])
+      )
+      # if(percentages_only+include_percentages+confint==0){
+      #   tab_out[i,j] <- as.numeric(tab_out[i,j])
+      # }
     }
   }
 
 
-  if(!is.null(rowvar_levels)){
-    colnames(tab)[ncol(tab)] <-  "Total"
-    tab$Category <- c(rowvar_levels, "Total")
-  }
-  else{
-    tab$Category <- rownames(tab_bu)
-  }
+  tab_out$Total = case_when(percentages_only ~ "100%",
+                            include_percentages ~ paste0(tab_margin[,ncol(tab_margin)], " (100%)"),
+                            T ~ as.character(tab_margin[,ncol(tab_margin)])
+  )
+
+
+
   if(!is.null(colvar_levels)){
-    colnames(tab) <-  c(colvar_levels,"Total")
+    colnames(tab_out) <-  c(colvar_levels,"Total")
+  }else{
+    colnames(tab_out) <-  c(colnames(tab),"Total")
   }
-  tab <- tab %>% dplyr::select(Category, everything())
+  if(!is.null(rowvar_levels)){
+    colnames(tab_out)[ncol(tab_out)] <-  "Total"
+    # tab_out$Category <- c(rowvar_levels, "Total")
+  }else{
+    tab_out$Category <- rownames(tab)
+  }
+
+  tab_out <- tab_out %>% dplyr::select(Category, everything())
+
   if(statistical_test){
-    tab$pval = pval$p.value
+    tab_out$pval = pval$p.value
   }
-  return(tab)
+
+
+  return(tab_out)
+
+
 }
+
+
+
 
 
 
@@ -143,7 +206,7 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL
                                                  sds[sds$Category == uniques[[x]],]$sd,")")
 
   }
-  tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
+  tab$Total = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
 
   if(statistical_test){
     mod=lm(formula = as.formula(paste0(rowvar," ~ ",colvar)), data = dat)
@@ -157,10 +220,12 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL
 
 
 ### Generalise the xtab function to do multiple covariates at once
-crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=cov_name_list, confint=T,
+crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, confint=T,
                           include_percentages = T,
                           rowwise_precentages = T, weights = NULL,
                           comma_thousands = F, statistical_test = F){
+
+  i=1
   res_list <- list()
   for (i in 1:length(rowvar_list)){
     print(paste0("Processing ",rowvar_list[[i]]))
@@ -177,12 +242,17 @@ crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=cov_name_l
 
 
     }
-    res$Sum <- as.character(res$Sum)
+    res$Total <- as.character(res$Total)
     res_list[[i]] <- res
   }
-  names(res_list) <- cov_names[rowvar_list]
-  out <- dplyr::bind_rows(res_list, .id = "Variable") %>% filter(Category != "Sum") %>%
-    dplyr::rename(`Sum / mean(SD)`=Sum)
+  if(!is.null(cov_names)){
+    names(res_list) <- cov_names[rowvar_list]
+  }else{
+    names(res_list) <- rowvar_list
+    }
+  out <- dplyr::bind_rows(res_list, .id = "Variable") %>% filter(Category != "Total")
+  # %>%
+  #   dplyr::rename(`Sum / mean(SD)`=Total)
 
 
   return(out)
@@ -213,7 +283,7 @@ xtabPercentageExtractor <- function(mystring="teststrng",
 makeXtabPlottable <- function(myxtab,
                               pivot_for_plotting = T){
   perc_cols=grepl("%",myxtab)
-  myxtab[,perc_cols]=lapply(X = myxtab[,perc_cols], FUN = xtab_percentage_extractor,
+  myxtab[,perc_cols]=lapply(X = myxtab[,perc_cols], FUN = xtabPercentageExtractor,
                             lookbehind = "\\(",
                             lookahead= "\\%",
                             return_numeric=T)
@@ -223,5 +293,103 @@ makeXtabPlottable <- function(myxtab,
   }
   return(myxtab)
 }
+
+
+
+
+
+# Deprecated --------------------------------------------------------------
+
+
+# Old crosstab function. Improved and updated April 2022
+
+
+# # Simple cross-tab function, with %s
+# crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
+#                      colvar_levels = NULL, confint =T,include_percentages=T,
+#                      rowwise_precentages = T, weights=NULL, comma_thousands = F,
+#                      statistical_test = F){
+#
+#   # weights
+#   if(is.null(weights)){
+#     tab <- (table(pull(dat,rowvar), pull(dat,colvar)))
+#
+#   }
+#   else{
+#     tab <- (round(questionr::wtd.table(x=pull(dat,rowvar),
+#                                        y= pull(dat,colvar),
+#                                        weights = pull(dat, weights),
+#                                        normwt = F,
+#                                        na.rm = T,
+#                                        na.show = F),0))
+#   }
+#
+#   # statstical test
+#   if(statistical_test){
+#     pval=chisq.test(tab)
+#   }
+#
+#   # save backup tab
+#   tab_bu <- tab
+#
+#   # add margins
+#   tab_margin=tab %>% addmargins() %>% as.data.frame.matrix()
+#
+#
+#   # tab <- addmargins(table(pull(dat,rowvar), pull(dat,colvar))) %>% as.data.frame.matrix()
+#   if(rowwise_precentages){
+#     tab.prop <- round(100*prop.table(tab,1),1) %>% as.data.frame.matrix()
+#   }else{
+#     tab.prop <- round(100*prop.table(tab,2),1) %>% as.data.frame.matrix()
+#   }
+#   if(comma_thousands){
+#     tabcomma=lapply(tab, comma_sep) %>% as.data.frame()
+#     colnames(tabcomma)= colnames(tab)
+#     tab=tabcomma
+#   }
+#   # i=j=1
+#   if(include_percentages){
+#     if(confint){
+#       for (i in 1:(nrow(tab))){
+#         for(j in 1:(ncol(tab))){
+#           if(rowwise_precentages){
+#             ci <- prevalence::propCI(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_margin[i,ncol(tab_margin)]), method = "wilson")
+#           }else{
+#             ci <- prevalence::propCI(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_margin[nrow(tab_margin),j]), method = "wilson")
+#           }
+#           tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$p,1),"%, [",round(100*ci$lower,1),"-",round(100*ci$upper,1),"])")
+#         }
+#       }
+#     }else{
+#       for (i in 1:(nrow(tab)-1)){
+#         for(j in 1:(ncol(tab))){
+#           tab[i,j] <-  paste0(tab[i,j], " (",tab.prop[i,j],"%)")
+#         }
+#       }
+#       for(j in 1:ncol(tab)){
+#         prop <- round(100*(as.numeric(tab_bu[nrow(tab),j]) / as.numeric(tab_bu[nrow(tab),ncol(tab)])),1)
+#         tab[nrow(tab),j] <-  paste0(tab[nrow(tab),j], " (",prop,"%)")
+#       }
+#     }
+#   }
+#
+#
+#   if(!is.null(rowvar_levels)){
+#     colnames(tab)[ncol(tab)] <-  "Total"
+#     tab$Category <- c(rowvar_levels, "Total")
+#   }
+#   else{
+#     tab$Category <- rownames(tab_bu)
+#   }
+#   if(!is.null(colvar_levels)){
+#     colnames(tab) <-  c(colvar_levels,"Total")
+#   }
+#   tab <- tab %>% dplyr::select(Category, everything())
+#   if(statistical_test){
+#     tab$pval = pval$p.value
+#   }
+#   return(tab)
+# }
+#
 
 
