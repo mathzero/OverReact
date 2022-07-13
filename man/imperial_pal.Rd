@@ -13,6 +13,7 @@ imperial_pal(palette = "default", reverse = FALSE, ...)
  \item pink, green, red, blue,
  \item tbp, vbn, obib, bnt,
  \item bgrey_grad, bgrn_grad
+ \item two_col_grey_blue, two_col_grey_pool, two_col_blue_navy, two_col_grey_orng
 }}
 
 \item{reverse}{Boolean indicating whether the palette should be reversed}

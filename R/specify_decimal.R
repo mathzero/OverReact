@@ -2,11 +2,24 @@
 
 
 ### helper function
-specifyDecimal <- function(x,k, format = "fg"){
-  out <- formatC(signif(x = x,digits = k),digits = k,format = format,flag = "#")
-  out <- gsub('^\\.|\\.$','',out)
+specifyDecimal <- function(x,k, format = "fg", simpleround =F){
+  if(simpleround){
+    out <- round(x = x,digits = k)
+    if(!class(out) %in%c("numeric","integer")){
+      out=matrix(lapply(out,as.character), nrow=nrow(x))
+      colnames(out)=colnames(x)
+      rownames(out)=rownames(x)
+    }else{
+      out <- as.character(out)
+    }
+    }else{
+    out <- formatC(signif(x = x,digits = k),digits = k,format = format,flag = "#")
+    out <- gsub('^\\.|\\.$','',out)
+  }
+
+
+
   return(out)
 }
 
-
-# class(specifyDecimal(0.1,2,format="fg"))
+# specifyDecimal(x,2,simpleround = T)

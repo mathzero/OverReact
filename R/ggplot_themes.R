@@ -8,6 +8,9 @@
 #' @import ggplot2
 #' @import extrafont
 #' @import hrbrthemes
+#' @import showtext
+#' @import sysfonts
+
 
 theme_react <- function(base_family = "IBM Plex Sans",
                         base_size = 11,
@@ -18,6 +21,14 @@ theme_react <- function(base_family = "IBM Plex Sans",
                         plot_title_size = 14,
                         plot_title_margin = 7,
                         ...){
+
+
+
+  # check if selected font is in loaded fonts
+  if(!base_family %in% base_family%in%as.data.frame(sysfonts::font_files())$ps_name){
+    print(paste0(base_family," is not loaded as a system font. Replacing with sans for now"))
+    base_family <- "sans"
+  }
 
   theme_bw(base_size = 10, base_family = base_family,
            base_line_size = 0.2,

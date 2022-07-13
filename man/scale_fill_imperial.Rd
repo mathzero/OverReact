@@ -13,6 +13,7 @@ scale_fill_imperial(palette = "default", discrete = TRUE, reverse = FALSE, ...)
  \item pink, green, red, blue,
  \item tbp, vbn, obib, bnt,
  \item bgrey_grad, bgrn_grad
+ \item two_col_grey_blue, two_col_grey_pool, two_col_blue_navy, two_col_grey_orng
 }}
 
 \item{discrete}{Boolean indicating whether color aesthetic is discrete or not}

@@ -11,10 +11,13 @@
 #' @param negval If data is binary, what is the negative value in the uncleaned data?
 #' @param posval If data is binary, what is the positive value in the uncleaned data?
 #' @param floornumber If data is continuous, what is the lowest 'real' value in the uncleaned data?
-#' @param dateFormat If data is date, what is the required output date format?
+#' @param dateFormat If data is date, what is the input date format?
+#' @param dateFormatOut If data is date, what is the required output date format?
+#' @param df A data frame. Columns that can be converted to numeric class without error will be converted
 
 
 ### function to clean all types of variable
+
 reactCleaner <- function(dat,datatype = "continuous", negval = 0, posval = 1, floornumber = 0,dateFormat,
                          dateFormatOut = "%Y-%m-%d"){
   if(!datatype %in% c("continuous", "binary", "date")){
@@ -96,3 +99,28 @@ naReporter <- function(data){
   }
 }
 
+
+
+# Converting potentially numeric columns to numeric in a DF ---------------
+
+# Function to test for numeric
+canBeNumeric <- function(x){
+  stopifnot(is.atomic(x) || is.list(x)) # check that x is vector
+  numNAs <- sum(is.na(x))
+  numNAsNew <- suppressWarnings(sum(is.na(as.numeric(as.character(x)))))
+  return(numNAs==numNAsNew)
+}
+
+
+# convert all possible cols to numeric
+checkConvertNumeric <- function(df){
+  # convert all possible cols to numeric
+  df_out <- as.data.frame(lapply(df, function(col){
+    if(canBeNumeric(col)){
+      as.numeric(as.character(col))
+    }else{
+      col
+    }
+  }))
+  return(df_out)
+}

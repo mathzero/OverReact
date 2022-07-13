@@ -20,10 +20,24 @@
 
 
 ### Main function to create a sequentially adjusted model. Depends on makeORTable
-modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",
+modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",simpleround =F,
                                  outcome="res", ref_level =NULL,
                                  joint_adjustment_vars = c("age_group_named","sex","region_named",
                                                            "ethnic_new", "imd_quintile_cat")){
+
+  # determine outcome type
+  num_y=length(unique(pull(data,outcome)))
+  if(num_y==2){
+    # print("Assuming binomial model")
+    family="binomial"
+  }else if (num_y>2){
+    # print("Assuming gaussian model")
+    family="gaussian"
+  }else{
+    print("Less than two unique values of outcome variable are found. Aborting modelling")
+    break
+  }
+
 
   classes <- lapply(data[,c(variable_name,joint_adjustment_vars)], class) %>% unlist()
 
@@ -46,7 +60,7 @@ modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",
     ### create univariate model
     f <- as.formula(paste(outcome," ~",variable_name))
     univ.mod.glm <- try(glm(f,  data = data,
-                        family = "binomial"),silent = T)
+                        family = family),silent = T)
     if(is(univ.mod.glm,"try-error")){
       tab_univ <-     data.frame(Level=NA, OR=NA, Lower=NA,
                                  Upper=NA, P_value=NA)
@@ -77,7 +91,7 @@ modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",
                                                 collapse = "+")))
       # run model
       mod <- univ.mod.glm <- try(glm(f,  data = data,
-                                 family = "binomial"),silent = T)
+                                 family = family),silent = T)
 
       if(is(univ.mod.glm,"try-error")){
         tab <-     data.frame(Level=NA, OR=NA, Lower=NA,
@@ -115,11 +129,11 @@ modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",
 
     ### Now we add all the models together into one big DF
     df.output=data.frame(Level=mod.results.list[[1]]$Level)
-    df.output$crude_mod_OR <- c(paste0(specifyDecimal(x = tab_univ$OR, k = sf,format = format),
+    df.output$crude_mod_OR <- c(paste0(specifyDecimal(x = tab_univ$OR, k = sf,format = format,simpleround =simpleround),
                                        " (",
-                                       specifyDecimal(tab_univ$Lower,  k = sf,format = format),
+                                       specifyDecimal(tab_univ$Lower,  k = sf,format = format,simpleround =simpleround),
                                        ",",
-                                       specifyDecimal(tab_univ$Upper,  k = sf,format = format),
+                                       specifyDecimal(tab_univ$Upper,  k = sf,format = format,simpleround =simpleround),
                                        ")"),
                                 rep(NA_character_, nrow(df.output)- nrow(tab_univ)))
 
@@ -129,11 +143,11 @@ modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",
 
     for (i in 1:length(joint_adjustment_vars)){
       # print(i)
-      mod.results.list[[i]]$OR_concat <- c(paste0(specifyDecimal(mod.results.list[[i]]$OR,  k = sf,format = format),
+      mod.results.list[[i]]$OR_concat <- c(paste0(specifyDecimal(mod.results.list[[i]]$OR,  k = sf,format = format,simpleround =simpleround),
                                                   " (",
-                                                  specifyDecimal(mod.results.list[[i]]$Lower, k = sf,format = format),
+                                                  specifyDecimal(mod.results.list[[i]]$Lower, k = sf,format = format,simpleround =simpleround),
                                                   ",",
-                                                  specifyDecimal(mod.results.list[[i]]$Upper,  k = sf,format = format),
+                                                  specifyDecimal(mod.results.list[[i]]$Upper,  k = sf,format = format,simpleround =simpleround),
                                                   ")"))
 
       df.output <- plyr::join(df.output, mod.results.list[[i]] %>% dplyr::select(Level, OR_concat),
@@ -163,10 +177,24 @@ modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",
 
 
 ModelMakerMulti <- function(dat=dfRes, list_of_variables_of_interest,outcome="res",
-                            sf=2,format="f",
+                            sf=2,format="f",simpleround =F,
                             joint_adjustment_vars = c("age_group_named","sex","region_named",
                                                       "ethnic_new", "imd_quintile_cat"),
-                            cov_name_list=NULL){
+                            cov_name_list=NULL,
+                            remove_intercept_from_results=T){
+
+  ### DETECT MODEL TYPE (gaussian/binomial)
+  # determine outcome type
+  num_y=length(unique(pull(dat,outcome)))
+  if(num_y==2){
+    family="binomial"
+    print("Assuming binomial model")
+
+  }else{
+    family="gaussian"
+    print("Assuming gaussian model")
+
+  }
 
   res_list <- list()
   plot_res_list <- list()
@@ -208,9 +236,19 @@ ModelMakerMulti <- function(dat=dfRes, list_of_variables_of_interest,outcome="re
                                      Category = Level)
   out_plot <- out_plot %>% dplyr::rename(Variable = predictor,
                                      Category = Level)
-  # %>%
-  #   dplyr::mutate_at(.vars = c("adjustment","OR","Lower","Upper","P_value"),
-  #                    .funs = as.numeric)
+
+
+  # rename OR to beta is gaussian
+  if(family=="gaussian"){
+    out_plot <- out_plot %>% dplyr::rename(Beta =OR)
+    out_df <- out_df %>% dplyr::rename(crude_mod_Beta =crude_mod_OR)
+  }
+
+  if(remove_intercept_from_results){
+    out_plot <- out_plot %>% filter(!grepl("Intercept",Category))
+    out_df <- out_df %>% filter(!grepl("Intercept",Category))
+
+  }
 
 
   return(list(df_output=out_df,
@@ -311,9 +349,9 @@ GAMModelMaker <- function(variable_name, data=dfRes,
 }
 
 
-
 ### Mini function to turn a glm model into an odds ratio table
 makeORTable <- function(mod, ref_level = NULL,dp=3){
+  mod_exp=(mod$family$family=="binomial")
   if(class(mod)[1] == "gam"){
     tab <- as.data.frame(summary.gam(mod)$p.table)
     tab$Lower = tab$Estimate - 1.96* tab$`Std. Error`
@@ -331,10 +369,17 @@ makeORTable <- function(mod, ref_level = NULL,dp=3){
     tab[,4] <- round(exp(as.numeric(tab[,4])),dp)
     tab[,5] <- round(as.numeric(tab[,5]),5)
   }else{
-    tab <- jtools::summ(mod, exp=T, ORs = T)
-    tab <- tab$coeftable  %>% as.data.frame() %>% select(1,2,3,5)
+    tab <- jtools::summ(mod, exp=mod_exp, ORs = mod_exp)
+    if(mod_exp){
+      tab <- tab$coeftable  %>% as.data.frame() %>% dplyr::select(1,2,3,5)
+    }else{
+      tab <- tab$coeftable  %>% as.data.frame() %>% dplyr::select(1,2,4)
+      tab$Lower = tab$Est.- qnorm(p = 0.975,mean = 0,sd = 1)*tab$S.E.
+      tab$Upper = tab$Est.+ qnorm(p = 0.975,mean = 0,sd = 1)*tab$S.E.
+      tab <- tab[,c(1,4,5,3)]
+    }
     tab$Level <- rownames(tab)
-    tab <- tab %>% select(Level, everything())
+    tab <- tab %>% dplyr::select(Level, everything())
     colnames(tab) <- c("Level", "OR", "Lower", "Upper", "P_value")
     # tab$Level <- sub("^.*?([A-Z])", "\\1",tab$Level)
     if(!is.null(ref_level)){

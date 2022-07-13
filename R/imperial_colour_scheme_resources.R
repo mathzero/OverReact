@@ -102,11 +102,19 @@ imperial_palettes <- list(
   `pink` =  imperial_cols("magenta pink", "violet", "plum", "purple"),
   `green` = imperial_cols("dark green", "dark teal", "blue", "kermit green"),
   `red` =  imperial_cols("brick", "orange", "imperial blue", "tangerine"),
-  `blue` = imperial_cols("blue", "imperial blue", "dark teal", "pool blue","pool blue"),
+  `blue` = imperial_cols("blue", "imperial blue", "dark teal", "pool blue","process blue"),
   `tbp` = imperial_cols("dark teal", "blue", "plum", "seaglass"),
   `vbn` =imperial_cols("violet", "blue", "navy", "pool blue"),
   `obib`= imperial_cols("orange", "dark green", "imperial blue", "pool blue"),
   `bnt` = imperial_cols("brick", "navy", "dark teal", "tangerine"),
+
+
+  # Two-colour themes
+  `two_col_grey_blue` =  imperial_cols("imperial blue","cool grey"),
+  `two_col_grey_pool` =  imperial_cols("pool blue","cool grey"),
+  `two_col_blue_navy` =  imperial_cols("imperial blue","navy"),
+  `two_col_grey_orng` =  imperial_cols("orange","cool grey"),
+
 
 
   # manufactured gradients

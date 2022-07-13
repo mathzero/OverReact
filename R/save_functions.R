@@ -27,18 +27,32 @@ saveREACTtable <- function(tab,outpath,filename,save_rds=F){
 saveREACTplot <- function(p,figpath,filename, width,height, savePDF=T){
   ggsave(filename = paste0(filename,".png"),plot = p,
          path = figpath, width = width,height = height,dpi = 300,units = "in"
-         )
+  )
   if(savePDF){
-    ggsave(filename = paste0(filename,".pdf"),plot = p,
-           path = figpath, width = width,height = height,units = "in"
-    )
+
+    # run an attempt to see if we can save with the designated font
+    attempt <- tryCatch(expr = ggsave(filename = paste0(filename,".pdf"),plot = p,
+                                      path = figpath, width = width,
+                                      height = height,units = "in"),
+                        error = function(e){
+                          FALSE
+                        })
+    if(!is.null(attempt)){
+      if(attempt==F){
+        print("Standard PDF saving failed (probably due to font). Trying with Cairo")
+        ggsave(filename = paste0(filename,".pdf"),plot = p,
+               path = figpath, width = width,height = height,
+               units = "in",device = cairo_pdf
+        )    }
+    }
+
   }
 }
 
 
 ### save either and detect filetype
 saveREACT <- function(file,figpath,outpath,filename, width=8,height=5){
-  if(class(file) == c("gg","ggplot")){
+  if(class(file) %in% c("gg","ggplot")){
     saveREACTplot(p = file,figpath = figpath,filename = filename,
                   width = width,height = height)
   }else if(class(file) %in% c("data.frame", "table", "matrix")){

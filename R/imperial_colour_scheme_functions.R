@@ -6,13 +6,14 @@
 #'  \item pink, green, red, blue,
 #'  \item tbp, vbn, obib, bnt,
 #'  \item bgrey_grad, bgrn_grad
+#'  \item two_col_grey_blue, two_col_grey_pool, two_col_blue_navy, two_col_grey_orng
+
 #' }
 #' @param reverse Boolean indicating whether the palette should be reversed
 #' @param ... Additional arguments to pass to colorRampPalette()
 #' @import ggplot2
 #' @import dichromat
 #' @import tinter
-
 
 imperial_pal <- function(palette = "default", reverse = FALSE, ...) {
   pal <- imperial_palettes[[palette]]
@@ -57,11 +58,14 @@ scale_color_imperial <- function(palette = "default", discrete = TRUE, reverse =
 #'  \item pink, green, red, blue,
 #'  \item tbp, vbn, obib, bnt,
 #'  \item bgrey_grad, bgrn_grad
+#'  \item two_col_grey_blue, two_col_grey_pool, two_col_blue_navy, two_col_grey_orng
 #' }
 #' @param discrete Boolean indicating whether color aesthetic is discrete or not
 #' @param reverse Boolean indicating whether the palette should be reversed
 #' @param ... Additional arguments passed to ggplot2::discrete_scale() or
 #'            ggplot2::scale_fill_gradientn(), used respectively when discrete is TRUE or FALSE
+#'
+#'
 #'
 scale_fill_imperial <- function(palette = "default", discrete = TRUE, reverse = FALSE, ...) {
   pal <- imperial_pal(palette = palette, reverse = reverse)
