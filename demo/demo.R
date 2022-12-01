@@ -18,6 +18,14 @@ dat$y=sample(c(0,1),size = n,replace = T)
 ### add gaussian y variable
 dat$y=rnorm(n =n,mean = 0,sd = 1)
 
+### add categorical factor variable y variable
+dat$cat=factor(sample(c("Case","Control"),size = n,replace = T))
+
+
+# Create table one --------------------------------------------------------
+rowvar_list=c("x1","x2","x3","x4")
+tab1=crossTabMulti(dat = dat,rowvar_list = rowvar_list,colvar = "cat",)
+
 
 
 
