@@ -24,7 +24,7 @@ dat$cat=factor(sample(c("Case","Control"),size = n,replace = T))
 
 # Create table one --------------------------------------------------------
 rowvar_list=c("x1","x2","x3","x4")
-tab1=crossTabMulti(dat = dat,rowvar_list = rowvar_list,colvar = "cat",)
+tab1=crossTabMulti(dat = dat,rowvar_list = rowvar_list,colvar = "cat",confint = T,comma_thousands = )
 
 
 
