@@ -13,7 +13,7 @@
 
 #' @param rowwise_precentages Logical - calculate %s rowwise (TRUE) or columnwise (FALSE)
 #' @param rowvar_list Supply a list of variables for the rows of a multi-variable cross-tab
-#' @param cov_names List of more descriptive names for the row variables in a cross-tab
+#' @param cov_names List of more descriptive names for the row variables in a cross-tab. Supply a list of the format eg list(varname="More descriptive variable name")
 #' @param mystring String, or vector of strings, to be amended
 #' @param lookbehind The text leading up to the start of the string to be extracted
 #' @param lookahead The text after the end of the string to be extracted
@@ -21,6 +21,7 @@
 #' @param myxtab A cross-tab table to be amended
 #' @param pivot_for_plotting Logical - if TRUE, the function will return a table that is pivoted long
 #' @param statistical_test Logical - if TRUE, the function will conduct an appropriate statistical test (chisq / anova) on your data
+#' @param comma_thousands Boolean - insert commas separating thousands in large numbers eg 1,000,000
 
 
 
@@ -157,7 +158,7 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL
 
 
 ### Generalise the xtab function to do multiple covariates at once
-crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=cov_name_list, confint=T,
+crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, confint=T,
                           include_percentages = T,
                           rowwise_precentages = T, weights = NULL,
                           comma_thousands = F, statistical_test = F){
@@ -180,10 +181,13 @@ crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=cov_name_l
     res$Sum <- as.character(res$Sum)
     res_list[[i]] <- res
   }
-  names(res_list) <- cov_names[rowvar_list]
+  if(!is.null(cov_names)){
+    names(res_list) <- cov_names[rowvar_list]
+  }else{
+    names(res_list) <- cov_names
+  }
   out <- dplyr::bind_rows(res_list, .id = "Variable") %>% filter(Category != "Sum") %>%
     dplyr::rename(`Sum / mean(SD)`=Sum)
-
 
   return(out)
 }
