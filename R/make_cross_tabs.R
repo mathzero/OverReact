@@ -150,12 +150,12 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL
     mod=lm(formula = as.formula(paste0(rowvar," ~ ",colvar)), data = dat)
     modanova=anova(mod)
     pval=modanova$`Pr(>F)`
-    tab$pval=pval
+    tab$pval=pval[[1]]
   }
   # tab$Variable = rowva
   return(tab)
 }
-
+# i=1
 
 ### Generalise the xtab function to do multiple covariates at once
 crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, confint=T,
@@ -167,7 +167,8 @@ crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, conf
     print(paste0("Processing ",rowvar_list[[i]]))
     if(class(pull(dat, rowvar_list[[i]])) %in% c("integer", "numeric") &
        !all(names(table(pull(dat, rowvar_list[[i]]))) %in% c("0", "1"))){
-      res <- crossTabContinuous(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar)
+      res <- crossTabContinuous(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,
+                                statistical_test=statistical_test)
 
     }else{
       res <- crossTab(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,confint = confint,
@@ -184,7 +185,7 @@ crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, conf
   if(!is.null(cov_names)){
     names(res_list) <- cov_names[rowvar_list]
   }else{
-    names(res_list) <- cov_names
+    names(res_list) <- rowvar_list
   }
   out <- dplyr::bind_rows(res_list, .id = "Variable") %>% filter(Category != "Sum") %>%
     dplyr::rename(`Sum / mean(SD)`=Sum)

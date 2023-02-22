@@ -13,7 +13,10 @@
 #' @param filename Name of file
 #' @param height height of file
 #' @param width Width of file
-#' @param width Width of file
+#' @param listOfTables Supply a named list of tables to be output as a workbook with named sheets
+#' @param workbookName The name of your xlsx workbook
+#' @param noDecimalsColumns A list of columns which do not require decimal points after numbers
+#' @param numFmt The format of the numberical columns (eg "0.00")
 
 
 
