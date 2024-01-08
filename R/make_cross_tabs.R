@@ -117,7 +117,7 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
 
 # Function to do x-tab for contiuous variables
 crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL, weights = NULL,
-                               statistical_test=F){
+                               statistical_test=F, test="anova"){
   if(!is.null(weights)){
     means <- sapply(split(dat,as.factor(pull(dat,colvar))), function(x) stats::weighted.mean(pull(x, rowvar),pull(x, weights), na.rm=T)) %>%
       as.table()%>% as.data.frame()
@@ -147,10 +147,17 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL
   tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
 
   if(statistical_test){
-    mod=lm(formula = as.formula(paste0(rowvar," ~ ",colvar)), data = dat)
-    modanova=anova(mod)
-    pval=modanova$`Pr(>F)`
-    tab$pval=pval[[1]]
+    # if(tolower(test)=="anova"){
+      mod=lm(formula = as.formula(paste0(rowvar," ~ ",colvar)), data = dat)
+      modanova=anova(mod)
+      pval=modanova$`Pr(>F)`
+      tab$pval=pval[[1]]
+    # }else if(tolower(test)=="wilcox"){
+    #   pval=wilcox.test(dat[[rowvar]],dat[[colvar]],paired = T)
+    # tab$pval=pval$p.value
+    # }else{
+    #   print("Please choose eiother 'anova' or 'wilcox' for test")
+    # }
   }
   # tab$Variable = rowva
   return(tab)
@@ -161,14 +168,14 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL
 crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, confint=T,
                           include_percentages = T,
                           rowwise_precentages = T, weights = NULL,
-                          comma_thousands = F, statistical_test = F){
+                          comma_thousands = F, statistical_test = F,test="anova"){
   res_list <- list()
   for (i in 1:length(rowvar_list)){
     print(paste0("Processing ",rowvar_list[[i]]))
     if(class(pull(dat, rowvar_list[[i]])) %in% c("integer", "numeric") &
        !all(names(table(pull(dat, rowvar_list[[i]]))) %in% c("0", "1"))){
       res <- crossTabContinuous(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,
-                                statistical_test=statistical_test)
+                                statistical_test=statistical_test,test=test)
 
     }else{
       res <- crossTab(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,confint = confint,

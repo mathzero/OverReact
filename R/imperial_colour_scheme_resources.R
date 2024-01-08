@@ -84,6 +84,13 @@ imperial_palettes <- list(
 
   `warm`   = imperial_cols("brick","tangerine","cherry red","lemon yellow"),
 
+  # Abbreviated
+  `short`  = imperial_cols(
+
+    "cool grey",
+    "process blue" ,
+    "red"),
+
   # extended
   `extended` =imperial_cols("navy",
                             "imperial blue",

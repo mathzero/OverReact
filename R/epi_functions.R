@@ -9,6 +9,12 @@
 #' @param p A p-value or vector of p-values for conversion. Must be numerical format
 #' @param num_asterisks Choose either "<0.0001****" or "<0.001 (three stars)" as the highest level of significance
 
+
+#' @param p_values A vector of p-values in numerical format
+#' @param return_p Boolean - return the pvalues in addition to the asterisks
+#' @param return_ns Boolean - return 'ns' when p>0.05
+#' @param round_to Number significant figures
+
 calculateEpiStats <- function(prediction, outcome, dp =3, returnAllStats=F){
   tp = sum(prediction*outcome,na.rm=T)
   tn = sum((1-prediction)*(1-outcome), na.rm=T)
@@ -66,3 +72,21 @@ pValEpiConverter <- function(p, num_asterisks=4){
     return(p_epi)
   }
 }
+
+
+
+# add asterisks to pvalues
+pvalAsterisker <- function(p_values,return_p=F,return_ns=F,round_to=4){
+  ast_vect=case_when(p_values<0.0001 ~ "****",
+                     p_values<0.001 ~ "***",
+                     p_values<0.01 ~ "**",
+                     p_values<0.05 ~ "*",
+                     return_ns ~ "ns",
+                     T ~ ""
+  )
+  if(return_p){
+    ast_vect <- paste0(round(p_values,round_to),ast_vect)
+  }
+  return(ast_vect)
+}
+

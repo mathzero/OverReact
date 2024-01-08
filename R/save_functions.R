@@ -29,11 +29,17 @@ saveREACTtable <- function(tab,outpath,filename,save_rds=F){
   write_csv(tab,paste0(outpath, filename,".csv"))
 }
 
+
 ### save plot
-saveREACTplot <- function(p,figpath,filename, width,height, savePDF=T){
-  ggsave(filename = paste0(filename,".png"),plot = p,
-         path = figpath, width = width,height = height,dpi = 300,units = "in"
-  )
+saveREACTplot <- function(p,figpath,filename, width,height, savePDF=T,filetypes="png"){
+  for(f in filetypes){
+    print(paste0("Saving ",f))
+    ggsave(filename = paste0(filename,".",f),plot = p,
+           path = figpath, width = width,height = height,dpi = 300,units = "in"
+    )
+  }
+
+
   if(savePDF){
 
     # run an attempt to see if we can save with the designated font
