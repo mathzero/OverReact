@@ -116,66 +116,92 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
 
 
 # Function to do x-tab for contiuous variables
-crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL, weights = NULL,
-                               statistical_test=F, test="anova"){
-  if(!is.null(weights)){
-    means <- sapply(split(dat,as.factor(pull(dat,colvar))), function(x) stats::weighted.mean(pull(x, rowvar),pull(x, weights), na.rm=T)) %>%
-      as.table()%>% as.data.frame()
-    sds <- plyr::ddply(dat,colvar, function(x) Hmisc::wtd.var(pull(x, rowvar),pull(x, weights))) %>% as.data.frame()
-    means$Freq <- round(means$Freq,2)
-    # root variance to get sd
-    colnames(sds) <- colnames(means)
-    sds$Freq <- round(sqrt(as.numeric(sds$Freq)),2)
+crossTabContinuous <- function(dat = dfRes, rowvar, colvar=NULL, weights = NULL,
+                               summary_stat="mean",
+                               statistical_test=F){
+
+  if(is.null(colvar)){
+    colvar="dummy"
+    dat$dummy="Dummy"
+  }
+
+  if(tolower(summary_stat)=="mean"){
+    if(!is.null(weights)){
+      means <- sapply(split(dat,as.factor(pull(dat,colvar))), function(x) stats::weighted.mean(pull(x, rowvar),pull(x, weights), na.rm=T)) %>%
+        as.table()%>% as.data.frame()
+      sds <- plyr::ddply(dat,colvar, function(x) Hmisc::wtd.var(pull(x, rowvar),pull(x, weights))) %>% as.data.frame()
+      means$Freq <- round(means$Freq,2)
+      # root variance to get sd
+      colnames(sds) <- colnames(means)
+      sds$Freq <- round(sqrt(as.numeric(sds$Freq)),2)
     }
-  else{
-    means <- (round(by(pull(dat, rowvar),pull(dat, colvar), mean, na.rm=T),2)) %>% as.table()%>% as.data.frame()
-    sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), sd, na.rm=T),2))%>% as.table()%>% as.data.frame()
+    else{
+      means <- (round(by(pull(dat, rowvar),pull(dat, colvar), mean, na.rm=T),2)) %>% as.table()%>% as.data.frame()
+      sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), sd, na.rm=T),2))%>% as.table()%>% as.data.frame()
+    }
+    names(means) <- c("Category", "mean")
+    names(sds) <- c("Category","sd")
+    statname="Mean (SD)"
+
+
+    uniques <- unique(pull(dat, colvar))[!is.na(unique(pull(dat, colvar)))] %>% as.character()
+    tab <- data.frame(matrix(nrow = 1, ncol=1+length(uniques),dimnames = list(NULL,c("Category", uniques))))
+    names(tab)[c(2:ncol(tab))] <- uniques
+    tab$Category <- statname
+    for (x in 1:length(uniques)){
+      tab[1,colnames(tab)==uniques[[x]]] <- paste0(means[means$Category == uniques[[x]],]$mean,
+                                                   " (",
+                                                   sds[sds$Category == uniques[[x]],]$sd,")")
+
+    }
+    tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
+
+  }else if(tolower(summary_stat)=="median"){
+    means <- (round(by(pull(dat, rowvar),pull(dat, colvar), median, na.rm=T),2)) %>% as.table()%>% as.data.frame()
+    sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), IQR, na.rm=T),2))%>% as.table()%>% as.data.frame()
+    names(means) <- c("Category", "median")
+    names(sds) <- c("Category","IQR")
+    statname="Median (IQR)"
+
+    uniques <- unique(pull(dat, colvar))[!is.na(unique(pull(dat, colvar)))] %>% as.character()
+    tab <- data.frame(matrix(nrow = 1, ncol=1+length(uniques),dimnames = list(NULL,c("Category", uniques))))
+    names(tab)[c(2:ncol(tab))] <- uniques
+    tab$Category <- statname
+    for (x in 1:length(uniques)){
+      tab[1,colnames(tab)==uniques[[x]]] <- paste0(means[means$Category == uniques[[x]],]$median,
+                                                   " (",
+                                                   sds[sds$Category == uniques[[x]],]$IQR,")")
+
+    }
+    tab$Sum = paste0(round(median(pull(dat, rowvar), na.rm=T),2), " (",round(IQR(pull(dat, rowvar), na.rm=T),2),")")
   }
 
-  names(means) <- c("Category", "mean")
-  names(sds) <- c("Category","sd")
-  uniques <- unique(pull(dat, colvar))[!is.na(unique(pull(dat, colvar)))] %>% as.character()
-  tab <- data.frame(matrix(nrow = 1, ncol=1+length(uniques),dimnames = list(NULL,c("Category", uniques))))
-  names(tab)[c(2:ncol(tab))] <- uniques
-  tab$Category <- "Mean (SD)"
-  for (x in 1:length(uniques)){
-    tab[1,colnames(tab)==uniques[[x]]] <- paste0(means[means$Category == uniques[[x]],]$mean,
-                                                 " (",
-                                                 sds[sds$Category == uniques[[x]],]$sd,")")
 
-  }
-  tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
+
 
   if(statistical_test){
-    # if(tolower(test)=="anova"){
       mod=lm(formula = as.formula(paste0(rowvar," ~ ",colvar)), data = dat)
       modanova=anova(mod)
       pval=modanova$`Pr(>F)`
       tab$pval=pval[[1]]
-    # }else if(tolower(test)=="wilcox"){
-    #   pval=wilcox.test(dat[[rowvar]],dat[[colvar]],paired = T)
-    # tab$pval=pval$p.value
-    # }else{
-    #   print("Please choose eiother 'anova' or 'wilcox' for test")
-    # }
   }
   # tab$Variable = rowva
   return(tab)
 }
-# i=1
+
 
 ### Generalise the xtab function to do multiple covariates at once
 crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, confint=T,
                           include_percentages = T,
-                          rowwise_precentages = T, weights = NULL,
-                          comma_thousands = F, statistical_test = F,test="anova"){
+                          rowwise_precentages = T, weights = NULL,summary_stat="mean",
+                          comma_thousands = F, statistical_test = F){
   res_list <- list()
   for (i in 1:length(rowvar_list)){
     print(paste0("Processing ",rowvar_list[[i]]))
     if(class(pull(dat, rowvar_list[[i]])) %in% c("integer", "numeric") &
        !all(names(table(pull(dat, rowvar_list[[i]]))) %in% c("0", "1"))){
-      res <- crossTabContinuous(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,
-                                statistical_test=statistical_test,test=test)
+      res <- crossTabContinuous(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,summary_stat=summary_stat,
+                                statistical_test=statistical_test)
 
     }else{
       res <- crossTab(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,confint = confint,
@@ -195,7 +221,7 @@ crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, conf
     names(res_list) <- rowvar_list
   }
   out <- dplyr::bind_rows(res_list, .id = "Variable") %>% filter(Category != "Sum") %>%
-    dplyr::rename(`Sum / mean(SD)`=Sum)
+    dplyr::rename(Pooled=Sum)
 
   return(out)
 }

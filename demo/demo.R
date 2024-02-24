@@ -29,7 +29,7 @@ dat$abcat=factor(sample(c("A","B"),size = n,replace = T))
 # Create table one --------------------------------------------------------
 rowvar_list=c("x1","x2","x3","x4","abcat")
 rowvar=rowvar_list[[5]]
-tab1=crossTabMulti(dat = dat,rowvar_list = rowvar_list,colvar = "cat",statistical_test = T)
+tab1=crossTabMulti(dat = dat,rowvar_list = rowvar_list,colvar = "cat",statistical_test = T,summary_stat = "median")
 
 
 
