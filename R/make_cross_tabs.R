@@ -12,7 +12,7 @@
 #' @param include_percentages Logical - include %s
 
 #' @param rowwise_precentages Logical - calculate %s rowwise (TRUE) or columnwise (FALSE)
-#' @param rowvar_list Supply a list of variables for the rows of a multi-variable cross-tab
+#' @param rowvars Supply a list of variables for the rows of a multi-variable cross-tab
 #' @param cov_names List of more descriptive names for the row variables in a cross-tab. Supply a list of the format eg list(varname="More descriptive variable name")
 #' @param mystring String, or vector of strings, to be amended
 #' @param lookbehind The text leading up to the start of the string to be extracted
@@ -191,20 +191,35 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar=NULL, weights = NULL,
 
 
 ### Generalise the xtab function to do multiple covariates at once
-crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, confint=T,
+crossTabMulti <- function(dat, rowvars, colvar=NULL, cov_names=NULL, confint=T,
                           include_percentages = T,
                           rowwise_precentages = T, weights = NULL,summary_stat="mean",
-                          comma_thousands = F, statistical_test = F){
+                          comma_thousands = F, statistical_test = F,
+                          rowvar_list){
+
+
+  if (!missing("rowvar_list")){
+    warning("Argument deprecated, use rowvars instead.
+              The parameter rowvar_list is set equal the parameter old_arg.")
+    rowvars <- rowvar_list
+  }
+
+  if(is.null(colvar)){
+    colvar="dummy"
+    dat$dummy="All data"
+  }
+
+
   res_list <- list()
-  for (i in 1:length(rowvar_list)){
-    print(paste0("Processing ",rowvar_list[[i]]))
-    if(class(pull(dat, rowvar_list[[i]])) %in% c("integer", "numeric") &
-       !all(names(table(pull(dat, rowvar_list[[i]]))) %in% c("0", "1"))){
-      res <- crossTabContinuous(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,summary_stat=summary_stat,
+  for (i in 1:length(rowvars)){
+    print(paste0("Processing ",rowvars[[i]]))
+    if(class(pull(dat, rowvars[[i]])) %in% c("integer", "numeric") &
+       !all(names(table(pull(dat, rowvars[[i]]))) %in% c("0", "1"))){
+      res <- crossTabContinuous(dat = dat,rowvar = rowvars[[i]], colvar = colvar,summary_stat=summary_stat,
                                 statistical_test=statistical_test)
 
     }else{
-      res <- crossTab(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,confint = confint,
+      res <- crossTab(dat = dat,rowvar = rowvars[[i]], colvar = colvar,confint = confint,
                       include_percentages=include_percentages,
                       rowwise_precentages = rowwise_precentages,
                       weights=weights, comma_thousands = comma_thousands,
@@ -216,9 +231,9 @@ crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, conf
     res_list[[i]] <- res
   }
   if(!is.null(cov_names)){
-    names(res_list) <- cov_names[rowvar_list]
+    names(res_list) <- cov_names[rowvars]
   }else{
-    names(res_list) <- rowvar_list
+    names(res_list) <- rowvars
   }
   out <- dplyr::bind_rows(res_list, .id = "Variable") %>% filter(Category != "Sum") %>%
     dplyr::rename(Pooled=Sum)
