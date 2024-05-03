@@ -174,6 +174,9 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar=NULL, weights = NULL,
 
     }
     tab$Sum = paste0(round(median(pull(dat, rowvar), na.rm=T),2), " (",round(IQR(pull(dat, rowvar), na.rm=T),2),")")
+  }else{
+    print("summary_stat not valid. Please choose from 'mean' or 'median'")
+    break
   }
 
 
@@ -197,6 +200,9 @@ crossTabMulti <- function(dat, rowvars, colvar=NULL, cov_names=NULL, confint=T,
                           comma_thousands = F, statistical_test = F,
                           rowvar_list){
 
+  if(!summary_stat %in% c("mean","median")){
+    print("Please choose 'mean' or 'median' for summary_stat")
+  }
 
   if (!missing("rowvar_list")){
     warning("Argument deprecated, use rowvars instead.
