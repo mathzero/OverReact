@@ -39,9 +39,9 @@ dat$cat[sample(1:n,size = 100,replace = F)] <- NA
 
 # Create table one --------------------------------------------------------
 
-rowvar_list=c("x1","x2","x3","x4","abcat")
+rowvar_list=c("x1","x2","x3","x4","abcat","x3","x4")
 colvar = "cat"
-rowvar_names=c("X1","X2","X3","X4","ABCAT!")
+rowvar_names=c("X1","X2","X3","X4","ABCAT!","X3","X4")
 rowvar_names <- as.list(rowvar_names)
 names(rowvar_names) <- rowvar_list
 # create table one
