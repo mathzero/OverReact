@@ -49,14 +49,15 @@ tableCat <- function(dat,
     colvect=(pull(dat,colvar))
   }
 
-  if(includeNAsRowvar & sum(is.na(pull(dat,rowvar)))>0){
+  NAswitch=includeNAsRowvar & sum(is.na(pull(dat,rowvar)))>0
+  if(NAswitch){
+
     rowvect=addNA(pull(dat,rowvar))
     useNA="ifany"
     na.show=T
     na.rm=F
   }else{
     rowvect=(pull(dat,rowvar))
-
     useNA="no"
     na.show=F
     na.rm=T
@@ -80,6 +81,11 @@ tableCat <- function(dat,
   if(statistical_test){
     pval=chisq.test(tab)
   }
+
+
+  # levs
+  levs=rownames(tab)
+  levs[is.na(levs)] <- "NA"
 
 
   # add margins
@@ -143,16 +149,16 @@ tableCat <- function(dat,
   }
 
   # add level and variable
-  tab$Level <- rownames(tab_bu)
+  tab$Level <- levs
 
   # variable
-  var_sum <- paste0(rowvar,", n (%)")
+  var_sum <- paste0(", n (%)")
 
   # add variable
-  tab$Variable <- c(var_sum,rep(" ",nrow(tab)-1))
+  tab$units <- c(var_sum,rep(" ",nrow(tab)-1))
 
   # reorder
-  tab <- tab %>% dplyr::select(Variable,Level, Missing, Sum,everything()) %>%
+  tab <- tab %>% dplyr::select(units,Level, Missing, Sum,everything()) %>%
     dplyr::rename(Overall=Sum) %>%
     dplyr::mutate(Level=case_when(Level=="NA." ~ "[NA]",
                                   T ~ Level))
@@ -271,13 +277,13 @@ tableCont <- function(dat,
   tab$Level <- ""
 
   # variable
-  var_sum <- paste0(rowvar,", ",summary_stat," (",ifelse(tolower(summary_stat)=="mean", "SD","IQR"),")")
+  var_sum <- paste0(", ",summary_stat," (",ifelse(tolower(summary_stat)=="mean", "SD","IQR"),")")
 
   # add variable
-  tab$Variable <- c(var_sum,rep(" ",nrow(tab)-1))
+  tab$units <- c(var_sum,rep(" ",nrow(tab)-1))
 
   # reorder
-  tab <- tab %>% dplyr::select(Variable,Level, Missing, Sum,everything()) %>%
+  tab <- tab %>% dplyr::select(units,Level, Missing, Sum,everything()) %>%
     dplyr::rename(Overall=Sum)
 
 
@@ -325,6 +331,7 @@ tableOne <- function(dat,
     if(addNobsTopRow){
     dat$Observations=" "
     rowvars <- c("Observations",setdiff(rowvars,"Observations"))
+    cov_names[["Observations"]] <- "Observations"
   }
 
 
@@ -348,13 +355,20 @@ tableOne <- function(dat,
     # res$ <- as.character(res$Sum)
     res_list[[i]] <- res
   }
+
+
   if(!is.null(cov_names)){
     names(res_list) <- cov_names[rowvars]
   }else{
     names(res_list) <- rowvars
   }
 
-  out <- dplyr::bind_rows(res_list, .id = "V") %>% dplyr::select(-V)
+  out <- dplyr::bind_rows(res_list, .id = "V") %>%
+    dplyr::mutate(Variable= case_when(units==" " ~" ",
+                                      T ~  paste0(V,units))) %>%
+              dplyr::select(-units,-V) %>%
+    dplyr::select(Variable, everything())
+
 
   if(formatPvalsForEpiPaper){
     out$`P-value` <- as.character(pvalAsterisker(p_values = out$`P-value`,return_p = T,return_ns = F,round_to = 4))
