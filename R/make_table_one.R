@@ -6,11 +6,8 @@
 #' @param dat data to be modelled
 #' @param rowvar row variable for cross-tab
 #' @param colvar column variable for cross-tab
-#' @param rowvar_levels Optionally supply names for the levels of the row variable
-#' @param colvar_levels Optionally supply names for the levels of the column variable
 #' @param confint Logical - return confidence intervals in cross tab
 #' @param include_percentages Logical - include %s
-
 #' @param rowwise_precentages Logical - calculate %s rowwise (TRUE) or columnwise (FALSE)
 #' @param rowvars Supply a list of variables for the rows of a multi-variable cross-tab
 #' @param cov_names List of more descriptive names for the row variables in a cross-tab. Supply a list of the format eg list(varname="More descriptive variable name")
@@ -21,44 +18,49 @@
 #' @param myxtab A cross-tab table to be amended
 #' @param pivot_for_plotting Logical - if TRUE, the function will return a table that is pivoted long
 #' @param statistical_test Logical - if TRUE, the function will conduct an appropriate statistical test (chisq / anova) on your data
+#' @param summary_stat "mean" or "median" - summary statistic for continuous variables. Mean will include (SD), median will include (IQR)
 #' @param comma_thousands Boolean - insert commas separating thousands in large numbers eg 1,000,000
+#' @param includeNAsColvar Boolean - include NA values as a separate group in the table columns
+#' @param includeNAsRowvar Boolean - include NA values as a separate group in the table rows
+#' @param formatPvalsForEpiPaper Boolean - if TRUE, add asterisks to pvalues and round
 
 
 
 # Cross tab function (generalisible) --------------------------------------
 
-# First a helper function to inset comma separators
-comma_sep=scales::label_comma(accuracy = 1,big.mark = ",", decimal.mark = ".")
-
 
 # Simple cross-tab function, with %s
-crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
-                     colvar_levels = NULL, confint =T,include_percentages=T,
-                     rowwise_precentages = T, weights=NULL, comma_thousands = F,
-                     statistical_test = F,
-                     includeNAsColvar=T,
-                     includeNAsRowvar=T){
+tableCat <- function(dat,
+                      rowvar,
+                      colvar,
+                      confint =T,
+                      include_percentages=T,
+                      rowwise_precentages = T,
+                      weights=NULL,
+                      comma_thousands = F,
+                      statistical_test = F,
+                      includeNAsColvar=T,
+                      includeNAsRowvar=T){
 
 
-  if(includeNAsColvar){
+  if(includeNAsColvar & sum(is.na(pull(dat,colvar)))>0){
     colvect=addNA(pull(dat,colvar))
   }else{
     colvect=(pull(dat,colvar))
   }
 
-  if(includeNAsRowvar){
+  if(includeNAsRowvar & sum(is.na(pull(dat,rowvar)))>0){
     rowvect=addNA(pull(dat,rowvar))
-
     useNA="ifany"
     na.show=T
     na.rm=F
-    }else{
-      rowvect=(pull(dat,rowvar))
+  }else{
+    rowvect=(pull(dat,rowvar))
 
-      useNA="no"
-      na.show=F
-      na.rm=T
-    }
+    useNA="no"
+    na.show=F
+    na.rm=T
+  }
 
 
 
@@ -67,17 +69,16 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
     tab <- (table(rowvect, colvect,useNA=useNA))
   }else{
     tab <- (round(questionr::wtd.table(x=rowvect,
-                           y= colvect,
-                           weights = pull(dat, weights),
-                           normwt = F,
-                           na.rm = na.rm,
-                           na.show = na.show),0))
+                                       y= colvect,
+                                       weights = pull(dat, weights),
+                                       normwt = F,
+                                       na.rm = na.rm,
+                                       na.show = na.show),0))
   }
 
   # statstical test
   if(statistical_test){
     pval=chisq.test(tab)
-
   }
 
 
@@ -132,6 +133,7 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
   # Add number of non-zero observations
   rv=pull(dat, rowvar)
   rv_non_na=sum(!is.na(rv))
+  rv_na=sum(is.na(rv))
   tab$Missing=c(rv_na,rep(" ",nrow(tab)-1))
   names(tab)[is.na(names(tab))] <- "NA"
 
@@ -161,21 +163,21 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
 
 
 # Function to do x-tab for contiuous variables
-crossTabContinuous <- function(dat = dfRes,
-                               rowvar,
-                               colvar=NULL,
-                               weights = NULL,
-                               summary_stat="mean",
-                               statistical_test=F,
-                               includeNAsColvar=T,
-                               includeNAsRowvar=T
-                               ){
+tableCont <- function(dat,
+                     rowvar,
+                     colvar=NULL,
+                     weights = NULL,
+                     summary_stat="mean",
+                     statistical_test=F,
+                     includeNAsColvar=T,
+                     includeNAsRowvar=T
+){
 
   if(is.null(colvar)){
     colvar="dummy"
     dat$dummy="Dummy"
   }
-  if(includeNAsColvar){
+  if(includeNAsColvar & sum(is.na(pull(dat,colvar)))>0){
     colvect=addNA(pull(dat,colvar))
   }else{
     colvect=(pull(dat,colvar))
@@ -206,14 +208,18 @@ crossTabContinuous <- function(dat = dfRes,
 
 
     uniques <- as.character(unique(colvect))
-    uniques[is.na(uniques)] <- "NA"
+    if(includeNAsColvar){
+      uniques[is.na(uniques)] <- "NA"
+    }else{
+      uniques <- uniques[!is.na(uniques)]
+      }
     tab <- data.frame(matrix(nrow = 1, ncol=length(uniques),dimnames = list(NULL,c( uniques))))
     names(tab) <- uniques
     # tab$Category <- statname
     for (x in 1:length(uniques)){
       tab[1,which(colnames(tab)==uniques[[x]])] <- paste0(means[means$Category == uniques[[x]],]$mean,
-                                                   " (",
-                                                   sds[sds$Category == uniques[[x]],]$sd,")")
+                                                          " (",
+                                                          sds[sds$Category == uniques[[x]],]$sd,")")
     }
     tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
 
@@ -229,7 +235,11 @@ crossTabContinuous <- function(dat = dfRes,
     sds$Category[is.na((sds$Category))] <- "NA"
 
     uniques <- as.character(unique(colvect))
-    uniques[is.na(uniques)] <- "NA"
+    if(includeNAsColvar){
+      uniques[is.na(uniques)] <- "NA"
+    }else{
+      uniques <- uniques[!is.na(uniques)]
+    }
     tab <- data.frame(matrix(nrow = 1, ncol=length(uniques),dimnames = list(NULL,c( uniques))))
     names(tab)[c(1:(ncol(tab)-1))] <- uniques
     # tab$Category <- statname
@@ -273,39 +283,47 @@ crossTabContinuous <- function(dat = dfRes,
 
   if(statistical_test){
     mod=lm(dat[[rowvar]]~colvect)
-      mod=lm(formula = as.formula(paste0(rowvar," ~ ",colvar)), data = dat)
-      modanova=anova(mod)
-      pval=modanova$`Pr(>F)`
-      tab[["P-value"]]=pval[[1]]
-  }
-  # tab$Variable = rowva
+    mod=lm(formula = as.formula(paste0(rowvar," ~ ",colvar)), data = dat)
+    modanova=anova(mod)
+    pval=modanova$`Pr(>F)`
+    tab[["P-value"]]=pval[[1]]
+      }
+
   return(tab)
 }
 
 
+
+
 ### Generalise the xtab function to do multiple covariates at once
-crossTabMulti <- function(dat, rowvars, colvar=NULL,
-                          cov_names=NULL, confint=T,
-                          include_percentages = T,
-                          rowwise_precentages = T, weights = NULL,summary_stat="mean",
-                          comma_thousands = F, statistical_test = F,
-                          includeNAsColvar=T,
-                          includeNAsRowvar=T,
-                          rowvar_list){
+tableOne <- function(dat,
+                     rowvars,
+                     colvar=NULL,
+                     cov_names=NULL,
+                     confint=F,
+                     include_percentages = T,
+                     rowwise_precentages = T,
+                     weights = NULL,
+                     summary_stat="mean",
+                     comma_thousands = F,
+                     statistical_test = F,
+                     includeNAsColvar=T,
+                     includeNAsRowvar=T,
+                     formatPvalsForEpiPaper=T,
+                     addNobsTopRow=T){
 
   if(!summary_stat %in% c("mean","median")){
     print("Please choose 'mean' or 'median' for summary_stat")
   }
 
-  if (!missing("rowvar_list")){
-    warning("Argument deprecated, use rowvars instead.
-              The parameter rowvar_list is set equal the parameter old_arg.")
-    rowvars <- rowvar_list
-  }
-
   if(is.null(colvar)){
     colvar="dummy"
     dat$dummy="All data"
+  }
+
+    if(addNobsTopRow){
+    dat$Observations=" "
+    rowvars <- c("Observations",setdiff(rowvars,"Observations"))
   }
 
 
@@ -314,15 +332,17 @@ crossTabMulti <- function(dat, rowvars, colvar=NULL,
     print(paste0("Processing ",rowvars[[i]]))
     if(class(pull(dat, rowvars[[i]])) %in% c("integer", "numeric") &
        !all(names(table(pull(dat, rowvars[[i]]))) %in% c("0", "1"))){
-      res <- crossTabContinuous(dat = dat,rowvar = rowvars[[i]], colvar = colvar,summary_stat=summary_stat,
-                                statistical_test=statistical_test)
+      res <- tableCont(dat = dat,rowvar = rowvars[[i]], colvar = colvar,summary_stat=summary_stat,
+                      statistical_test=statistical_test,includeNAsColvar = includeNAsColvar,
+                      includeNAsRowvar = includeNAsRowvar)
 
     }else{
-      res <- crossTab(dat = dat,rowvar = rowvars[[i]], colvar = colvar,confint = confint,
-                      include_percentages=include_percentages,
-                      rowwise_precentages = rowwise_precentages,
-                      weights=weights, comma_thousands = comma_thousands,
-                      statistical_test=statistical_test)
+      res <- tableCat(dat = dat,rowvar = rowvars[[i]], colvar = colvar,confint = confint,
+                       include_percentages=include_percentages,
+                       rowwise_precentages = rowwise_precentages,
+                       weights=weights, comma_thousands = comma_thousands,
+                       statistical_test=statistical_test,includeNAsColvar = includeNAsColvar,
+                       includeNAsRowvar = includeNAsRowvar)
     }
     # res$ <- as.character(res$Sum)
     res_list[[i]] <- res
@@ -333,45 +353,26 @@ crossTabMulti <- function(dat, rowvars, colvar=NULL,
     names(res_list) <- rowvars
   }
 
-  out <- dplyr::bind_rows(res_list, .id = "Variable")
+  out <- dplyr::bind_rows(res_list, .id = "V") %>% dplyr::select(-V)
+
+  if(formatPvalsForEpiPaper){
+    out$`P-value` <- as.character(pvalAsterisker(p_values = out$`P-value`,return_p = T,return_ns = F,round_to = 4))
+    dupePvals = duplicated(out$`P-value`)
+    if(length(dupePvals) > 0){
+      out$`P-value`[dupePvals] <- " "
+    }
+  }
+
+  # clean rownames
+  rownames(out) <- NULL
+
+  # tidy up observation row
+  out$Variable[(out$Variable=="Observations, n (%)")] <- "N (%)"
 
   return(out)
 }
 
 
 
-# Functions to make output from xtab functions plottable ------------------
-
-
-# define dirty function to get numbers out of xtabs
-xtabPercentageExtractor <- function(mystring="teststrng",
-                                      lookbehind = "\\(",
-                                      lookahead= "\\%)",
-                                      return_numeric=T){
-  full_lookbehind=paste0(".*",lookbehind)
-  full_lookahead=paste0(lookahead,".*")
-  x=gsub(full_lookbehind, "",mystring)
-  y=gsub(full_lookahead, "",x)
-  if(return_numeric){
-    y=as.numeric(y)
-  }
-  return(y)
-}
-
-
-# define another dirty function to get a plottable df from an xtab
-makeXtabPlottable <- function(myxtab,
-                              pivot_for_plotting = T){
-  perc_cols=grepl("%",myxtab)
-  myxtab[,perc_cols]=lapply(X = myxtab[,perc_cols], FUN = xtab_percentage_extractor,
-                            lookbehind = "\\(",
-                            lookahead= "\\%",
-                            return_numeric=T)
-  if(pivot_for_plotting){
-    myxtab=tidyr::pivot_longer(data = myxtab,cols = c(1:ncol(myxtab))[perc_cols]) %>%
-      dplyr::select(Variable, name, value)
-  }
-  return(myxtab)
-}
 
 

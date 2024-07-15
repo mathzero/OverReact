@@ -59,7 +59,7 @@ pValEpiConverter <- function(p, num_asterisks=4){
                                  p<0.001 ~ "p<0.001***",
                                  p<0.01 ~ "p<0.01**",
                                  p<0.05 ~ "p<0.05*",
-                                 T ~ "p>0.05"
+                                 T ~ "ns"
     ))
     return(p_epi)
   }
@@ -67,7 +67,7 @@ pValEpiConverter <- function(p, num_asterisks=4){
     p_epi=as.character(case_when(p<0.001 ~ "p<0.001***",
                                  p<0.01 ~ "p<0.01**",
                                  p<0.05 ~ "p<0.05*",
-                                 T ~ "p>0.05"
+                                 T ~ "ns"
     ))
     return(p_epi)
   }
