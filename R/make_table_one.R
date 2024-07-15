@@ -262,6 +262,7 @@ tableCont <- function(dat,
   # Add number of non-zero observations
   rv=pull(dat, rowvar)
   rv_non_na=sum(!is.na(rv))
+  rv_na=sum(is.na(rv))
   tab$Missing=c(rv_na,rep(" ",nrow(tab)-1))
   names(tab)[is.na(names(tab))] <- "NA"
 
