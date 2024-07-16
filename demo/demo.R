@@ -35,6 +35,8 @@ for(i in 1:50){
 dat$abcat[sample(1:n,size = 50,replace = F)] <- NA
 dat$cat[sample(1:n,size = 100,replace = F)] <- NA
 
+# add some signal to x1
+dat$x1[dat$cat=="Case" & !is.na(dat$cat)] <- dat$x1[dat$cat=="Case"& !is.na(dat$cat)]+1
 
 
 # Create table one --------------------------------------------------------
@@ -44,6 +46,7 @@ colvar = "cat"
 rowvar_names=c("X1","X2","X3","X4","ABCAT!","X3","X4")
 rowvar_names <- as.list(rowvar_names)
 names(rowvar_names) <- rowvar_list
+
 # create table one
 tab1=tableOne(dat = dat,rowvars = rowvar_list,colvar = "cat",statistical_test = T,confint = F,cov_names = rowvar_names,
               summary_stat = "mean",formatPvalsForEpiPaper = T,includeNAsColvar = T,includeNAsRowvar = T)
