@@ -372,7 +372,7 @@ tableOne <- function(dat,
 
   if(formatPvalsForEpiPaper){
     out$`P-value` <- as.character(pvalAsterisker(p_values = out$`P-value`,return_p = T,return_ns = F,round_to = 4))
-    dupePvals = duplicated(paste0(out$Variable,out$`P-value`))
+    dupePvals = out$Variable==" "
     if(length(dupePvals) > 0){
       out$`P-value`[dupePvals] <- " "
     }

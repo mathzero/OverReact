@@ -186,8 +186,8 @@ savePrettyExcelWorkbook <- function(listOfTables=NULL, workbookName = "myworkboo
     # add vertical dashed border styles
     if("Overall" %in% colnames(tab)){
       missingColIndex <- which(colnames(tab) == "Overall")
-      dashedBorderStyle = openxlsx::createStyle(border = "right", borderStyle = "dashed",
-                                                borderColour = "grey70")
+      # dashedBorderStyle = openxlsx::createStyle(border = "right", borderStyle = "dashed",
+      #                                           borderColour = "grey70")
       openxlsx::addStyle(wb = wb, sheet = tabName, style = dashedBorderStyle,
                          cols = missingColIndex, rows = 1:(nrow(tab) + 1),
                          gridExpand = T, stack = T)
@@ -195,8 +195,8 @@ savePrettyExcelWorkbook <- function(listOfTables=NULL, workbookName = "myworkboo
 
     if("P-value" %in% colnames(tab)){
       pValueColIndex <- which(colnames(tab) == "P-value")
-      dashedBorderStyle = openxlsx::createStyle(border = "left", borderStyle = "dashed",
-                                                borderColour = "grey70")
+      # dashedBorderStyle = openxlsx::createStyle(border = "left", borderStyle = "dashed",
+      #                                           borderColour = "grey70")
       openxlsx::addStyle(wb = wb, sheet = tabName, style = dashedBorderStyle,
                          cols = pValueColIndex, rows = 1:(nrow(tab) + 1),
                          gridExpand = T, stack = T)
