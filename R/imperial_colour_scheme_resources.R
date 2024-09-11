@@ -1,138 +1,126 @@
 #' @import ggplot2
 #' @import dichromat
 
-# define master list of Imperial Brand colours
-# colours are taken from here: https://www.imperial.ac.uk/brand-style-guide/visual-identity/brand-colours/
-imperial_colours= c(`navy` = "#002147",
-                    `imperial blue` = "#003E74",
-                    `light grey` = "#EBEEEE",
-                    `cool grey` = "#9D9D9D",
-                    `light blue` = "#D4EFFC",
-                    `dark grey` = "#373A36",
+# Define the new color palette based on the extracted HEX values
+new_colours <- c(
+  Dark = "#232333",
+  Navy_Blue = "#000080",
+  Saddle_Brown = "#8b4513",
+  Teal = "#008080",
+  Medium_Violet_Red = "#c71585",
+  Indigo = "#4b0082",
+  Crimson = "#dc143c",
+  Orange_Red = "#ff4500",
+  Dark_Green = "#006400",
+  Slate_Gray = "#708090",
+  Imperial_Blue = "#0000cd",
+  Yellow = "#ffff00",
+  Turquoise = "#40e0d0",
+  Violet = "#ee82ee",
+  Medium_Blue_Slate = "#7b68ee",
+  Red = "#ff0000",
+  Dark_Orange = "#ff8c00",
+  Spring_Green = "#00ff7f",
+  White_Smoke = "#f5f5f5",
+  Deep_Sky_Blue = "#00bfff",
+  Khaki = "#f0e68c",
+  Pale_Turquoise = "#afeeee",
+  Light_Pink = "#ffb6c1",
+  Lavender = "#e6e6fa",
+  Salmon = "#fa8072",
+  Orange = "#ffa500",
+  Pale_Green = "#98fb98"
+)
 
-                    # cool colours
-                    `blue` ="#006EAF",
-                    `process blue` ="#0091D4",
-                    `pool blue` = "#00ACD7",
-                    `dark teal` ="#0f8291",
-                    `teal` = "#009CBC",
-                    `seaglass` ="#379f9f",
-                    `dark green` = "#02893B",
-                    `kermit green` = "#66a40a",
-                    `lime` = "#BBCE00",
-
-                    # warm colours
-                    `orange`="#D24000",
-                    `tangerine`="#EC7300",
-                    `lemon yellow`="#FFDD00",
-                    `brick`="#A51900",
-                    `red`="#DD2501",
-                    `cherry red`="#E40043",
-                    `raspberry red`="#9F004E",
-                    `magenta pink`="#C81E78",
-                    `iris` = "#751E66",
-                    `violet`="#960078",
-                    `plum`="#321E6D",
-                    `purple` = "#653098")
-
-# we don't want capitals here so change to lower case
-# names(imperial_colours) <- stringr::str_to_lower(names(imperial_colours))
-
-#' Function to extract imperial colors as hex codes
-#'
-#' @param ... Character names of imperial_colors
-#'
-imperial_cols <- function(...) {
+# Function to extract new colors as hex codes
+new_cols <- function(...) {
   cols <- c(...)
   if (is.null(cols))
-    return (imperial_colours)
-  imperial_colours[cols]
+    return (new_colours)
+  new_colours[cols]
 }
 
-imperial_palettes <- list(
+# Define new palettes
+new_palettes <- list(
 
-  `default` = imperial_cols(
-    "navy",
-    "pool blue",
-    "lime",
-    "tangerine",
-    "violet"
+  `default` = new_cols(
+    "Navy_Blue",
+    "Teal",
+    "Turquoise",
+    "Lime",
+    "Orange_Red",
+    "Violet",
+    "Dark_Green",
+    "Deep_Sky_Blue",
+    "Saddle_Brown",
+    "Khaki"
   ),
 
-
-
-  # main three palettes
-  `core`  = imperial_cols(
-    # "navy",
-    "imperial blue" ,
-    "pool blue",
-    # "light grey",
-    "cool grey",
-    "dark grey"),
-
-  `cool`  = imperial_cols("imperial blue",
-                          "process blue",
-                          # "pool blue",
-                          # "teal",
-                          "seaglass",
-                          # "dark teal",
-                          "dark green",
-                          "kermit green",
-                          "lime",
-                          "pool blue"
+  `earth` = new_cols(
+    "Saddle_Brown",
+    "Dark_Green",
+    "Slate_Gray",
+    "Khaki",
+    "Pale_Green"
   ),
 
-  `warm`   = imperial_cols("brick","tangerine","cherry red","lemon yellow"),
-
-  # Abbreviated
-  `short`  = imperial_cols(
-
-    "cool grey",
-    "process blue" ,
-    "red"),
-
-  # extended
-  `extended` =imperial_cols("navy",
-                            "imperial blue",
-                            # "blue",
-                            "dark teal",
-                            "dark green",
-                            "lime",
-                            "lemon yellow",
-                            "tangerine",
-                            "brick",
-                            "cherry",
-                            "purple",
-                            "dark grey"),
-
-  # website colour themes
-  `pink` =  imperial_cols("magenta pink", "violet", "plum", "purple"),
-  `green` = imperial_cols("dark green", "dark teal", "blue", "kermit green"),
-  `red` =  imperial_cols("brick", "orange", "imperial blue", "tangerine"),
-  `blue` = imperial_cols("blue", "imperial blue", "dark teal", "pool blue","process blue"),
-  `tbp` = imperial_cols("dark teal", "blue", "plum", "seaglass"),
-  `vbn` =imperial_cols("violet", "blue", "navy", "pool blue"),
-  `obib`= imperial_cols("orange", "dark green", "imperial blue", "pool blue"),
-  `bnt` = imperial_cols("brick", "navy", "dark teal", "tangerine"),
-
-
-  # Two-colour themes
-  `two_col_grey_blue` =  imperial_cols("imperial blue","cool grey"),
-  `two_col_grey_pool` =  imperial_cols("pool blue","cool grey"),
-  `two_col_blue_navy` =  imperial_cols("imperial blue","navy"),
-  `two_col_grey_orng` =  imperial_cols("orange","cool grey"),
-
-
-
-  # manufactured gradients
-  `bgrey_grad` = imperial_cols("navy", "imperial blue" ,
-                               "blue", "pool blue", "light blue",
-                               "light grey", "cool grey", "dark grey"
+  `cool` = new_cols(
+    "Teal",
+    "Indigo",
+    "Deep_Sky_Blue",
+    "Turquoise",
+    "Pale_Turquoise"
   ),
 
-  `bgrn_grad` = imperial_cols("navy", "imperial blue" ,
-                              "blue", "pool blue", "light blue",
-                              "lime", "dark green"
+  `warm` = new_cols(
+    "Orange_Red",
+    "Dark_Orange",
+    "Salmon",
+    "Crimson",
+    "Yellow"
+  ),
+
+  `soft` = new_cols(
+    "White_Smoke",
+    "Lavender",
+    "Light_Pink",
+    "Pale_Turquoise",
+    "Pale_Green"
+  ),
+
+  `bold` = new_cols(
+    "Red",
+    "Dark_Orange",
+    "Medium_Violet_Red",
+    "Imperial_Blue",
+    "Crimson"
+  ),
+
+  `nature` = new_cols(
+    "Spring_Green",
+    "Teal",
+    "Dark_Green",
+    "Khaki",
+    "Slate_Gray"
+  ),
+
+  `two_col_grey_teal` = new_cols(
+    "Slate_Gray", "Teal"
+  ),
+
+  `two_col_pink_purple` = new_cols(
+    "Light_Pink", "Lavender"
+  ),
+
+  `two_col_blue_green` = new_cols(
+    "Deep_Sky_Blue", "Pale_Green"
   )
 )
 
+# Example function to apply new palettes in ggplot2
+apply_palette <- function(palette_name) {
+  ggplot(mtcars, aes(x = factor(cyl), fill = factor(gear))) +
+    geom_bar() +
+    scale_fill_manual(values = new_palettes[[palette_name]]) +
+    theme_minimal()
+}
