@@ -2,7 +2,7 @@
 #' @import dichromat
 
 # Define the new color palette based on the extracted HEX values
-new_colours <- c(
+imperial_colours <- c(
   Dark = "#232333",
   Navy_Blue = "#000080",
   Saddle_Brown = "#8b4513",
@@ -33,17 +33,17 @@ new_colours <- c(
 )
 
 # Function to extract new colors as hex codes
-new_cols <- function(...) {
+imperial_cols <- function(...) {
   cols <- c(...)
   if (is.null(cols))
-    return (new_colours)
-  new_colours[cols]
+    return (imperial_colours)
+  imperial_colours[cols]
 }
 
 # Define new palettes
-new_palettes <- list(
+imperial_palettes <- list(
 
-  `default` = new_cols(
+  `default` = imperial_cols(
     "Navy_Blue",
     "Teal",
     "Turquoise",
@@ -56,7 +56,7 @@ new_palettes <- list(
     "Khaki"
   ),
 
-  `earth` = new_cols(
+  `earth` = imperial_cols(
     "Saddle_Brown",
     "Dark_Green",
     "Slate_Gray",
@@ -64,7 +64,7 @@ new_palettes <- list(
     "Pale_Green"
   ),
 
-  `cool` = new_cols(
+  `cool` = imperial_cols(
     "Teal",
     "Indigo",
     "Deep_Sky_Blue",
@@ -72,7 +72,7 @@ new_palettes <- list(
     "Pale_Turquoise"
   ),
 
-  `warm` = new_cols(
+  `warm` = imperial_cols(
     "Orange_Red",
     "Dark_Orange",
     "Salmon",
@@ -80,7 +80,7 @@ new_palettes <- list(
     "Yellow"
   ),
 
-  `soft` = new_cols(
+  `soft` = imperial_cols(
     "White_Smoke",
     "Lavender",
     "Light_Pink",
@@ -88,7 +88,7 @@ new_palettes <- list(
     "Pale_Green"
   ),
 
-  `bold` = new_cols(
+  `bold` = imperial_cols(
     "Red",
     "Dark_Orange",
     "Medium_Violet_Red",
@@ -96,7 +96,7 @@ new_palettes <- list(
     "Crimson"
   ),
 
-  `nature` = new_cols(
+  `nature` = imperial_cols(
     "Spring_Green",
     "Teal",
     "Dark_Green",
@@ -104,23 +104,16 @@ new_palettes <- list(
     "Slate_Gray"
   ),
 
-  `two_col_grey_teal` = new_cols(
+  `two_col_grey_teal` = imperial_cols(
     "Slate_Gray", "Teal"
   ),
 
-  `two_col_pink_purple` = new_cols(
+  `two_col_pink_purple` = imperial_cols(
     "Light_Pink", "Lavender"
   ),
 
-  `two_col_blue_green` = new_cols(
+  `two_col_blue_green` = imperial_cols(
     "Deep_Sky_Blue", "Pale_Green"
   )
 )
 
-# Example function to apply new palettes in ggplot2
-apply_palette <- function(palette_name) {
-  ggplot(mtcars, aes(x = factor(cyl), fill = factor(gear))) +
-    geom_bar() +
-    scale_fill_manual(values = new_palettes[[palette_name]]) +
-    theme_minimal()
-}

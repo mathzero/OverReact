@@ -1,6 +1,6 @@
 #' Return function to interpolate a new color palette
 #'
-#' @param palette Character name of palette in new_palettes. Choose from:
+#' @param palette Character name of palette in imperial_palettes. Choose from:
 #' \itemize{
 #'  \item default, earth, cool, warm, soft, bold, nature,
 #'  \item two_col_grey_teal, two_col_pink_purple, two_col_blue_green
@@ -11,8 +11,8 @@
 #' @import dichromat
 #' @import tinter
 
-new_pal <- function(palette = "default", reverse = FALSE, ...) {
-  pal <- new_palettes[[palette]]
+imperial_pal <- function(palette = "default", reverse = FALSE, ...) {
+  pal <- imperial_palettes[[palette]]
 
   if (reverse) pal <- rev(pal)
 
@@ -21,7 +21,7 @@ new_pal <- function(palette = "default", reverse = FALSE, ...) {
 
 #' Color scale constructor for new colors
 #'
-#' @param palette Character name of palette in new_palettes. Choose from:
+#' @param palette Character name of palette in imperial_palettes. Choose from:
 #' \itemize{
 #'  \item default, earth, cool, warm, soft, bold, nature,
 #'  \item two_col_grey_teal, two_col_pink_purple, two_col_blue_green
@@ -32,10 +32,10 @@ new_pal <- function(palette = "default", reverse = FALSE, ...) {
 #'            ggplot2::scale_color_gradientn(), used respectively when discrete is TRUE or FALSE
 #'
 scale_color_new <- function(palette = "default", discrete = TRUE, reverse = FALSE, ...) {
-  pal <- new_pal(palette = palette, reverse = reverse)
+  pal <- imperial_pal(palette = palette, reverse = reverse)
 
   if (discrete) {
-    ggplot2::discrete_scale("colour", paste0("new_", palette), palette = pal, ...)
+    ggplot2::discrete_scale("colour", paste0("imperial_", palette), palette = pal, ...)
   } else {
     ggplot2::scale_color_gradientn(colours = pal(256), ...)
   }
@@ -43,7 +43,7 @@ scale_color_new <- function(palette = "default", discrete = TRUE, reverse = FALS
 
 #' Fill scale constructor for new colors
 #'
-#' @param palette Character name of palette in new_palettes. Choose from:
+#' @param palette Character name of palette in imperial_palettes. Choose from:
 #' \itemize{
 #'  \item default, earth, cool, warm, soft, bold, nature,
 #'  \item two_col_grey_teal, two_col_pink_purple, two_col_blue_green
@@ -54,10 +54,10 @@ scale_color_new <- function(palette = "default", discrete = TRUE, reverse = FALS
 #'            ggplot2::scale_fill_gradientn(), used respectively when discrete is TRUE or FALSE
 #'
 scale_fill_new <- function(palette = "default", discrete = TRUE, reverse = FALSE, ...) {
-  pal <- new_pal(palette = palette, reverse = reverse)
+  pal <- imperial_pal(palette = palette, reverse = reverse)
 
   if (discrete) {
-    ggplot2::discrete_scale("fill", paste0("new_", palette), palette = pal, ...)
+    ggplot2::discrete_scale("fill", paste0("imperial_", palette), palette = pal, ...)
   } else {
     ggplot2::scale_fill_gradientn(colours = pal(256), ...)
   }
