@@ -62,3 +62,6 @@ scale_fill_new <- function(palette = "default", discrete = TRUE, reverse = FALSE
     ggplot2::scale_fill_gradientn(colours = pal(256), ...)
   }
 }
+
+scale_fill_imperial <- scale_fill_new
+scale_color_imperial <- scale_color_new
