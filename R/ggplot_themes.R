@@ -44,7 +44,7 @@ theme_react <- function(base_family = "sans",
       strip.background = element_rect(fill = "white",size = 0.2),
       axis.text = element_text(size = 8),
       strip.text = element_text(face = "bold",size = strip_text_size,margin = ggplot2::margin(rep(2,4)),
-                                family=semibold_family),
+                                family=base_family),
 
       # # from Silge
       # strip.text = ggplot2::element_text(hjust = 0, size=strip_text_size,
@@ -53,13 +53,12 @@ theme_react <- function(base_family = "sans",
       plot.subtitle = ggplot2::element_text(hjust = 0, size=subtitle_size,
                                                  margin=ggplot2::margin(b=subtitle_margin),
                                                  family=base_family),
-      plot.title = ggplot2::element_text(hjust = 0, size = plot_title_size,
+      plot.title = ggplot2::element_text(hjust = 0, size = plot_title_size,face = "bold",
                                               margin=ggplot2::margin(b=plot_title_margin),
-                                              family=semibold_family)
+                                              family=base_family)
     )
 
 }
-
 
 
 theme_mw <- function(base_family = "sans",
