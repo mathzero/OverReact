@@ -311,6 +311,7 @@ tableOne <- function(dat,
                      includeNAsColvar=T,
                      includeNAsRowvar=T,
                      formatPvalsForEpiPaper=T,
+                     includeColForMissing=T,
                      addNobsTopRow=T){
 
   if(!summary_stat %in% c("mean","median")){
@@ -357,10 +358,12 @@ tableOne <- function(dat,
   out <- dplyr::bind_rows(res_list, .id = "V") %>% dplyr::select(-V)
 
   if(formatPvalsForEpiPaper){
-    out$`P-value` <- as.character(pvalAsterisker(p_values = out$`P-value`,return_p = T,return_ns = F,round_to = 4))
-    dupePvals = duplicated(out$`P-value`)
-    if(length(dupePvals) > 0){
-      out$`P-value`[dupePvals] <- " "
+    if(statistical_test){
+      out$`P-value` <- as.character(pvalAsterisker(p_values = out$`P-value`,return_p = T,return_ns = F,round_to = 4))
+      dupePvals = duplicated(out$`P-value`)
+      if(length(dupePvals) > 0){
+        out$`P-value`[dupePvals] <- " "
+      }
     }
   }
 
@@ -369,6 +372,10 @@ tableOne <- function(dat,
 
   # tidy up observation row
   out$Variable[(out$Variable=="Observations, n (%)")] <- "N (%)"
+
+  if(!includeColForMissing){
+    out <- dplyr::select(.data = out, -Missing)
+  }
 
   return(out)
 }

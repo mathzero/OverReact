@@ -43,7 +43,7 @@ rowvar_list=c("x1","x2","x3","x4","abcat")
 colvar = "cat"
 
 # create table one
-tab1=tableOne(dat = dat,rowvars = rowvar_list,colvar = "cat",statistical_test = T,confint = F,
+tab1=tableOne(dat = dat,rowvars = rowvar_list,colvar = "cat",statistical_test = F,confint = F,includeColForMissing = T,
               summary_stat = "mean",formatPvalsForEpiPaper = T,includeNAsColvar = T,includeNAsRowvar = T)
 tab1
 
