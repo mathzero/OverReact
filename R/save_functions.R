@@ -33,7 +33,7 @@ saveREACTtable <- function(tab,outpath,filename,save_rds=F){
 ### save plot
 saveREACTplot <- function(p,figpath,filename, width,height, savePDF=T,filetypes="png"){
   for(f in filetypes){
-    print(paste0("Saving ",f))
+    # print(paste0("Saving ",f))
     ggsave(filename = paste0(filename,".",f),plot = p,
            path = figpath, width = width,height = height,dpi = 300,units = "in"
     )
@@ -51,7 +51,7 @@ saveREACTplot <- function(p,figpath,filename, width,height, savePDF=T,filetypes=
                         })
     if(!is.null(attempt)){
       if(attempt==F){
-        print("Standard PDF saving failed (probably due to font). Trying with Cairo")
+        # print("Standard PDF saving failed (probably due to font). Trying with Cairo")
         ggsave(filename = paste0(filename,".pdf"),plot = p,
                path = figpath, width = width,height = height,
                units = "in",device = cairo_pdf
