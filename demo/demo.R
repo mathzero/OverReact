@@ -48,7 +48,7 @@ rowvar_names <- as.list(rowvar_names)
 names(rowvar_names) <- rowvar_list
 
 # create table one
-tab1=tableOne(dat = dat,rowvars = rowvar_list,colvar = "cat",statistical_test = T,confint = F,cov_names = rowvar_names,
+tab1=tableOne(dat = dat,rowvars = rowvar_list,colvar = "cat",statistical_test = T,confint = T,cov_names = rowvar_names,
               summary_stat = "mean",formatPvalsForEpiPaper = T,includeNAsColvar = T,includeNAsRowvar = T)
 tab1
 

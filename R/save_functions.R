@@ -171,7 +171,8 @@ savePrettyExcelWorkbook <- function(listOfTables=NULL, workbookName = "myworkboo
     openxlsx::addStyle(wb = wb, sheet = tabName, style = headerStyleLeft,
                        cols = which(!as.logical(lapply(tab, is.numeric))),
                        rows = 1, gridExpand = T, stack = T)
-
+    dashedBorderStyle = openxlsx::createStyle(border = "right", borderStyle = "dashed",
+                                              borderColour = "grey70")
     # add vertical dashed border styles
     if("Missing" %in% colnames(tab)){
       missingColIndex <- which(colnames(tab) == "Missing")

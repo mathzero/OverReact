@@ -111,14 +111,14 @@ tableCat <- function(dat,
       for (i in 1:(nrow(tab))){
         for(j in 1:(ncol(tab))){
           if(rowwise_precentages){
-            ci <- prevalence::propCI(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[i,ncol(tab_bu)]), method = "wilson")
+            ci <- calculate_prop_ci(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[i,ncol(tab_bu)]), method = "wilson")
           }else{
-            ci <- prevalence::propCI(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[nrow(tab_bu),j]), method = "wilson")
+            ci <- calculate_prop_ci(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[nrow(tab_bu),j]), method = "wilson")
           }
           if(j==ncol(tab)){
-            tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$p,1),"%)")
+            tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$proportion,1),"%)")
           }else{
-            tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$p,1),"%, [",round(100*ci$lower,1),"-",round(100*ci$upper,1),"])")
+            tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$proportion,1),"%, [",round(100*ci$lower,1),"-",round(100*ci$upper,1),"])")
           }
         }
       }
@@ -395,6 +395,60 @@ tableOne <- function(dat,
 }
 
 
+calculate_prop_ci <- function(x, n, method = "wilson") {
+  # Validate inputs
+  if (!is.numeric(x) || !is.numeric(n)) {
+    stop("Both 'x' and 'n' must be numeric values.")
+  }
+  if (n <= 0 || round(n) != n) {
+    stop("The number of n must be a positive integer.")
+  }
+  if (x < 0 || x > n) {
+    stop("The number of x must be between 0 and the number of n.")
+  }
 
+  # Calculate point estimate
+  p_hat <- x / n
+
+  # 95% confidence corresponds to an alpha of 0.05 (two-tailed)
+  z <- qnorm(0.975)  # 97.5th percentile of the normal distribution
+
+  if (method == "normal") {
+    # Standard normal approximation (Wald interval)
+    se <- sqrt(p_hat * (1 - p_hat) / n)
+    lower <- p_hat - z * se
+    upper <- p_hat + z * se
+    # Ensure that the computed limits lie within [0, 1]
+    lower <- max(lower, 0)
+    upper <- min(upper, 1)
+  } else if (method == "wilson") {
+    # Wilson score interval
+    n <- n
+    z2 <- z^2
+    # Adjusted center
+    center <- (p_hat + z2 / (2 * n)) / (1 + z2 / n)
+    # Margin of error using the Wilson adjustment
+    margin <- z * sqrt((p_hat * (1 - p_hat) / n) + (z2 / (4 * n^2))) / (1 + z2 / n)
+    lower <- center - margin
+    upper <- center + margin
+  } else {
+    stop("Method must be either 'normal' or 'wilson'.")
+  }
+
+  # Return the point estimate and interval
+  result <- list(
+    proportion = p_hat,
+    lower = lower,
+    upper = upper
+  )
+
+  return(result)
+}
+
+# Example usage:
+# Calculate a 95% confidence interval for 10 x in 20 n
+ci_normal <- calculate_prop_ci(x = 10, n = 20, method = "wilson")
+
+print(ci_normal)
 
 
