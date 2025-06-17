@@ -7,7 +7,7 @@ lapply(scripts,source)
 
 set.seed(123)
 ### create dummy data
-n=10000
+n=1000000
 dat=data.frame(x1=rnorm(n =n,mean = 0,sd = 1),
                x2=rnorm(n =n,mean = 0,sd = 1),
                x3=rnorm(n =n,mean = 0,sd = 1),

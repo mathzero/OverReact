@@ -16,187 +16,224 @@
 
 # Model maker function ----------------------------------------------------
 
+# 1.  Sequentially-adjusted univariable models ---------------------------
 
+#' @import dplyr
+#' @import stringr
+#' @import plyr
+#' @importFrom stats glm as.formula
+modelMakerSequential <- function(variable_name,
+                                 data  = dfRes,
+                                 sf    = 2,
+                                 format = "f",
+                                 simpleround = FALSE,
+                                 outcome = "res",
+                                 ref_level = NULL,
+                                 joint_adjustment_vars = c("age_group_named",
+                                                           "sex",
+                                                           "region_named",
+                                                           "ethnic_new",
+                                                           "imd_quintile_cat")) {
 
-
-### Main function to create a sequentially adjusted model. Depends on makeORTable
-modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",simpleround =F,
-                                 outcome="res", ref_level =NULL,
-                                 joint_adjustment_vars = c("age_group_named","sex","region_named",
-                                                           "ethnic_new", "imd_quintile_cat")){
-
-  # determine outcome type
-  num_y=length(unique(dplyr::pull(data,outcome)))
-  if(num_y==2){
-    # print("Assuming binomial model")
-    family="binomial"
-  }else if (num_y>2){
-    # print("Assuming gaussian model")
-    family="gaussian"
-  }else{
-    print("Less than two unique values of outcome variable are found. Aborting modelling")
-    break
+  ## 1  Detect outcome type ----
+  num_y <- length(unique(dplyr::pull(data, outcome)))
+  family <- if (num_y == 2) "binomial"
+  else if (num_y > 2) "gaussian"
+  else {
+    message("Outcome has <2 unique values – aborting")
+    return(NULL)
   }
 
+  ## 2  Quick audit ----
+  classes <- lapply(data[ , c(variable_name, joint_adjustment_vars)], class) |> unlist()
+  if ("character" %in% classes)
+    message("Character variables detected: ",
+            paste(c(variable_name, joint_adjustment_vars)[classes == "character"],
+                  collapse = ", "))
 
-  classes <- lapply(data[,c(variable_name,joint_adjustment_vars)], class) %>% unlist()
+  ## 3  Crude model ----
+  f_crude <- stats::as.formula(sprintf("%s ~ %s", outcome, variable_name))
+  univ.mod <- try(stats::glm(f_crude, data = data, family = family), silent = TRUE)
 
-  if("character" %in% classes){
-    print("These variables are character class. Consider converting to factor:")
-    print(c(variable_name,joint_adjustment_vars)[classes == "character"])
-
-  }
-  ### models will fail if insufficient data to work with, so putting this in as a quick failsafe.
-  ### With world enough and time, much better to replace with a trycatch
-
-  # check that we don't have an insufficient amount of data for the number of categories
-  # numvals <- length(unique(pull(data,variable_name)))
-  # nobs <- sum(!is.na(pull(data,variable_name)))
-  #
-  # if(class(data[,variable_name]) %in% c("factor","character") & nobs<=numvals+30 ){
-  #   print("May not be enough data to run this model")
-  # }else{
-
-    ### create univariate model
-    f <- as.formula(paste(outcome," ~",variable_name))
-    univ.mod.glm <- try(glm(f,  data = data,
-                        family = family),silent = T)
-    if(is(univ.mod.glm,"try-error")){
-      tab_univ <-     data.frame(Level=NA, OR=NA, Lower=NA,
-                                 Upper=NA, P_value=NA)
-
-    }else{
-
-    ### Create OR table
-    tab_univ <- makeORTable(univ.mod.glm, ref_level=ref_level)
-
-    ### Add model name
+  if (inherits(univ.mod, "try-error")) {
+    tab_univ <- data.frame(Level = NA, OR = NA, Lower = NA, Upper = NA, P_value = NA)
+  } else {
+    tab_univ <- makeORTable(univ.mod, ref_level = ref_level)
     tab_univ$model <- "Crude"
-    tab_univ$Level <- stringr::str_remove(tab_univ$Level,variable_name)
+    tab_univ$Level <- stringr::str_remove(tab_univ$Level, variable_name)
+  }
 
+  ## 4  Sequential adjustments ----
+  mod.list         <- vector("list", length(joint_adjustment_vars))
+  mod.list.forplot <- mod.list
 
-    }
-    # create empty lists for results
-    mod.results.list <- list()
-    mod.results.list.forplot <- list()
+  for (i in seq_along(joint_adjustment_vars)) {
 
+    f_adj <- stats::as.formula(
+      sprintf("%s ~ %s",
+              outcome,
+              paste(unique(c(variable_name, joint_adjustment_vars[1:i])), collapse = "+"))
+    )
 
-    for (i in 1:length(joint_adjustment_vars)){
+    mod_i <- try(stats::glm(f_adj, data = data, family = family), silent = TRUE)
 
+    if (inherits(mod_i, "try-error")) {
 
-      # print(paste0("Now processing additional covariate:", joint_adjustment_vars[i]))
+      tab_i <- data.frame(Level = NA, OR = NA, Lower = NA, Upper = NA, P_value = NA,
+                          model = paste0("+", joint_adjustment_vars[i]))
 
-      ### adjusted for age and gender
-      f <- as.formula(paste(outcome," ~", paste(unique(c(variable_name,joint_adjustment_vars[1:i])),
-                                                collapse = "+")))
-      # run model
-      mod <- univ.mod.glm <- try(glm(f,  data = data,
-                                 family = family),silent = T)
+    } else {
 
-      if(is(univ.mod.glm,"try-error")){
-        tab <-     data.frame(Level=NA, OR=NA, Lower=NA,
-                                   Upper=NA, P_value=NA,
-                              model=paste0("+", joint_adjustment_vars[[i]]))
-        # save for plot
-        mod.results.list.forplot[[i]] <- tab
+      tab_i <- makeORTable(mod_i, ref_level = ref_level)
+      tab_i$model <- paste0("+", joint_adjustment_vars[i])
 
-        ### Add to list
-        mod.results.list[[i]] <- tab
-      }else{
-
-      ### Create OR table
-      tab <- makeORTable(mod, ref_level=ref_level)
-
-      ### Add model name
-      tab$model <- paste0("+", joint_adjustment_vars[[i]])
-
-
-      ### Select only the rows that refer to the variable of interest (for plotting)
-      sel_indx=grepl(pattern = variable_name,x = tab$Level,ignore.case = T)
-      sel_indx[[1]] <- TRUE # we always want the first one
-
-      # remove variable name
-      tab$Level <- stringr::str_remove(tab$Level,variable_name)
-
-
-      # save for plot
-      mod.results.list.forplot[[i]] <- tab[sel_indx,]
-
-      ### Add to list
-      mod.results.list[[i]] <- tab[sel_indx,]
-      }
+      keep <- grepl(variable_name, tab_i$Level, ignore.case = TRUE)
+      keep[1] <- TRUE
+      tab_i$Level <- stringr::str_remove(tab_i$Level, variable_name)
+      tab_i <- tab_i[keep, ]
     }
 
-    ### Now we add all the models together into one big DF
-    df.output=data.frame(Level=mod.results.list[[1]]$Level)
-    df.output$crude_mod_OR <- c(paste0(specifyDecimal(x = tab_univ$OR, k = sf,format = format,simpleround =simpleround),
-                                       " (",
-                                       specifyDecimal(tab_univ$Lower,  k = sf,format = format,simpleround =simpleround),
-                                       ",",
-                                       specifyDecimal(tab_univ$Upper,  k = sf,format = format,simpleround =simpleround),
-                                       ")"),
-                                rep(NA_character_, nrow(df.output)- nrow(tab_univ)))
+    mod.list[[i]]         <- tab_i
+    mod.list.forplot[[i]] <- tab_i
+  }
 
-    names(mod.results.list.forplot)  <- joint_adjustment_vars
-    mod.results.list.forplot$crude <- tab_univ
+  ## 5  Collate results ----
+  names(mod.list.forplot) <- joint_adjustment_vars
+  mod.list.forplot$crude  <- tab_univ
 
+  df.out <- data.frame(Level = mod.list[[1]]$Level)
+  df.out$crude_mod_OR <- c(
+    paste0(specifyDecimal(tab_univ$OR,    k = sf, format = format, simpleround = simpleround),
+           " (",
+           specifyDecimal(tab_univ$Lower, k = sf, format = format, simpleround = simpleround),
+           ",",
+           specifyDecimal(tab_univ$Upper, k = sf, format = format, simpleround = simpleround),
+           ")"),
+    rep(NA_character_, nrow(df.out) - nrow(tab_univ))
+  )
 
-    for (i in 1:length(joint_adjustment_vars)){
-      # print(i)
-      mod.results.list[[i]]$OR_concat <- c(paste0(specifyDecimal(mod.results.list[[i]]$OR,  k = sf,format = format,simpleround =simpleround),
-                                                  " (",
-                                                  specifyDecimal(mod.results.list[[i]]$Lower, k = sf,format = format,simpleround =simpleround),
-                                                  ",",
-                                                  specifyDecimal(mod.results.list[[i]]$Upper,  k = sf,format = format,simpleround =simpleround),
-                                                  ")"))
+  for (i in seq_along(joint_adjustment_vars)) {
 
-      df.output <- plyr::join(df.output, mod.results.list[[i]] %>% dplyr::select(Level, OR_concat),
-                              by="Level", type = "left", match = "first")
-      names(df.output)[i+2]=paste0("plus_", joint_adjustment_vars[[i]])
+    m <- mod.list[[i]]
+    m$OR_concat <- paste0(
+      specifyDecimal(m$OR,    k = sf, format = format, simpleround = simpleround),
+      " (",
+      specifyDecimal(m$Lower, k = sf, format = format, simpleround = simpleround),
+      ",",
+      specifyDecimal(m$Upper, k = sf, format = format, simpleround = simpleround),
+      ")"
+    )
 
-    }
+    df.out <- plyr::join(
+      df.out,
+      dplyr::select(m, Level, OR_concat),
+      by    = "Level",
+      type  = "left",
+      match = "first"
+    )
+    names(df.out)[i + 2] <- paste0("plus_", joint_adjustment_vars[i])
+  }
 
-  # }
-  df.output.abbrev <- df.output
-
-  return(list(model_df=df.output,
-              model_df_predictorORs_only = df.output.abbrev,
-              crude_model_output=tab_univ,
-              adj_model_outputs=mod.results.list.forplot))
+  list(model_df                   = df.out,
+       model_df_predictorORs_only = df.out,
+       crude_model_output         = tab_univ,
+       adj_model_outputs          = mod.list.forplot)
 }
 
+# 2.  Human-readable variable names ---------------------------
 
+#' @importFrom tools toTitleCase
+get_pretty_name <- function(var, dat, name_fun = NULL, auto_pretty = TRUE) {
 
-# Helper that decides how to spell each variable in the output ------------
-
-
-get_pretty_name <- function(var, dat,
-                            name_fun = NULL,           # <- optional user function
-                            auto_pretty = TRUE) {      # <- toggle for step 3 above
-
-  ## (i)  Session-wide dictionary in options()
   dict <- getOption("modelmaker.name_map")
   if (!is.null(dict) && var %in% names(dict)) return(dict[[var]])
 
-  ## (ii)  Label attribute carried by haven / Hmisc / readstat, etc.
   lbl <- attr(dat[[var]], "label", exact = TRUE)
   if (!is.null(lbl)) return(lbl)
 
-  ## (iii) Automatic prettifier
   if (auto_pretty) {
     var <- gsub("_", " ", var)
     var <- tools::toTitleCase(var)
   }
 
-  ## (iv)  Final chance: a user-supplied function
   if (is.function(name_fun)) var <- name_fun(var)
 
   var
 }
 
+# 3.  Convert a fitted model into an OR/beta table ---------------------------
 
-#' Multiple-model maker
-#' ---------------------------------------------------------------
+#' @import dplyr
+#' @importFrom mgcv summary.gam
+#' @importFrom jtools summ
+#' @importFrom stats qnorm
+makeORTable <- function(mod, ref_level = NULL, dp = 3) {
+
+  mod_exp <- (mod$family$family == "binomial")
+
+  if (inherits(mod, "gam")) {
+
+    tab <- mgcv::summary.gam(mod)$p.table |>
+      as.data.frame()
+
+    tab$Lower <- tab$Estimate - 1.96 * tab$`Std. Error`
+    tab$Upper <- tab$Estimate + 1.96 * tab$`Std. Error`
+
+    tab <- tab |>
+      dplyr::select(Estimate, Lower, Upper, `Pr(>|z|)`)
+
+    tab$Level <- rownames(tab)
+    tab <- tab |>
+      dplyr::select(Level, dplyr::everything()) |>
+      stats::setNames(c("Level", "OR", "Lower", "Upper", "P_value"))
+
+    if (!is.null(ref_level))
+      tab[1, ] <- c(paste0(ref_level, " [reference]"),
+                    rep(NA_real_, ncol(tab) - 1))
+
+    tab[, 2:4] <- round(exp(as.numeric(as.matrix(tab[, 2:4]))), dp)
+    tab[, 5]   <- round(as.numeric(tab[, 5]), 5)
+
+  } else {
+
+    tab <- jtools::summ(mod, exp = mod_exp, ORs = mod_exp)
+
+    if (mod_exp) {
+
+      tab <- tab$coeftable |>
+        as.data.frame() |>
+        dplyr::select(1, 2, 3, 5)
+
+    } else {
+
+      tab <- tab$coeftable |>
+        as.data.frame() |>
+        dplyr::select(1, 2, 4)
+
+      tab$Lower <- tab$Est. - stats::qnorm(0.975) * tab$S.E.
+      tab$Upper <- tab$Est. + stats::qnorm(0.975) * tab$S.E.
+      tab       <- tab[ , c(1, 4, 5, 3)]
+    }
+
+    tab$Level <- rownames(tab)
+    tab <- tab |>
+      dplyr::select(Level, dplyr::everything()) |>
+      stats::setNames(c("Level", "OR", "Lower", "Upper", "P_value"))
+
+    if (!is.null(ref_level))
+      tab[1, ] <- c(paste0(ref_level, " [reference]"),
+                    rep(NA_real_, ncol(tab) - 1))
+
+    tab[, 2:4] <- round(as.numeric(tab[, 2:4]), dp)
+    tab[, 5]   <- round(as.numeric(tab[, 5]), 5)
+  }
+
+  rownames(tab) <- seq_len(nrow(tab))
+  tab
+}
+
+# 4. Multiple-model maker ---------------------------
+
 #' @import dplyr
 #' @import stats
 #' @import mgcv
@@ -357,7 +394,7 @@ GAMModelMaker <- function(variable_name, data=dfRes,
                           joint_adjustment_vars = c("days_since_first_vaccine","covida","age")){
 
 
-  classes <- lapply(data[,c(variable_name,joint_adjustment_vars)], class) %>% unlist()
+  classes <- lapply(data[,c(variable_name,joint_adjustment_vars)], class) |> unlist()
 
   if("character" %in% classes){
     print("These variables are character class. Consider converting to factor:")
@@ -422,9 +459,9 @@ GAMModelMaker <- function(variable_name, data=dfRes,
                                                                    rep(NA_character_, nrow(df.output)- nrow(mod.results.list[[i]])))
 
     }
-    df.output <- df.output %>% dplyr::rename(Variable = predictor,
+    df.output <- df.output |> dplyr::rename(Variable = predictor,
                                        Category = Level)
-    tab_univ <- tab_univ %>% dplyr::rename(Variable = predictor,
+    tab_univ <- tab_univ |> dplyr::rename(Variable = predictor,
                                              Category = Level)
 
     df.output.abbrev <- df.output[complete.cases(df.output),]
@@ -436,51 +473,4 @@ GAMModelMaker <- function(variable_name, data=dfRes,
 
   }
 }
-
-
-### Mini function to turn a glm model into an odds ratio table
-makeORTable <- function(mod, ref_level = NULL,dp=3){
-  mod_exp=(mod$family$family=="binomial")
-  if(class(mod)[1] == "gam"){
-    tab <- as.data.frame(summary.gam(mod)$p.table)
-    tab$Lower = tab$Estimate - 1.96* tab$`Std. Error`
-    tab$Upper = tab$Estimate + 1.96* tab$`Std. Error`
-    tab <- tab %>% dplyr::select(Estimate,Lower, Upper,`Pr(>|z|)`)
-    tab$Level <- rownames(tab)
-    tab <- tab %>% dplyr::select(Level, everything())
-    colnames(tab) <- c("Level", "OR", "Lower", "Upper", "P_value")
-    # tab$Level <- sub("^.*?([A-Z])", "\\1",tab$Level)
-    if(!is.null(ref_level)){
-      tab[1,] <- c(paste0(ref_level," [reference]"), rep(NA_real_, ncol(tab)-1))
-    }
-    tab[,2] <- round(exp(as.numeric(tab[,2])),dp)
-    tab[,3] <- round(exp(as.numeric(tab[,3])),dp)
-    tab[,4] <- round(exp(as.numeric(tab[,4])),dp)
-    tab[,5] <- round(as.numeric(tab[,5]),5)
-  }else{
-    tab <- jtools::summ(mod, exp=mod_exp, ORs = mod_exp)
-    if(mod_exp){
-      tab <- tab$coeftable  %>% as.data.frame() %>% dplyr::select(1,2,3,5)
-    }else{
-      tab <- tab$coeftable  %>% as.data.frame() %>% dplyr::select(1,2,4)
-      tab$Lower = tab$Est.- qnorm(p = 0.975,mean = 0,sd = 1)*tab$S.E.
-      tab$Upper = tab$Est.+ qnorm(p = 0.975,mean = 0,sd = 1)*tab$S.E.
-      tab <- tab[,c(1,4,5,3)]
-    }
-    tab$Level <- rownames(tab)
-    tab <- tab %>% dplyr::select(Level, everything())
-    colnames(tab) <- c("Level", "OR", "Lower", "Upper", "P_value")
-    # tab$Level <- sub("^.*?([A-Z])", "\\1",tab$Level)
-    if(!is.null(ref_level)){
-      tab[1,] <- c(paste0(ref_level," [reference]"), rep(NA_real_, ncol(tab)-1))
-    }
-    tab[,2] <- round(as.numeric(tab[,2]),dp)
-    tab[,3] <- round(as.numeric(tab[,3]),dp)
-    tab[,4] <- round(as.numeric(tab[,4]),dp)
-    tab[,5] <- round(as.numeric(tab[,5]),5)
-  }
-  rownames(tab) <- 1:nrow(tab)
-  return(tab)
-}
-
 
