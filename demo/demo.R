@@ -73,7 +73,7 @@ cov_names=NULL
 
 myvars=c("x1","x2","x3","x4")
 mymods=ModelMakerMulti(dat = dat,list_of_variables_of_interest = myvars,outcome = "y",sf = 2,
-                       simpleround = T,ncores = 10,
+                       simpleround = T,ncores = 10,auto_pretty = T,
                        joint_adjustment_vars = myvars)
 mymods$plot_output
 mymods$df_output
