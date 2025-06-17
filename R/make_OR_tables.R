@@ -195,14 +195,16 @@ get_pretty_name <- function(var, dat,
 }
 
 
-# Multiple model maker ----------------------------------------------------
+#' Multiple-model maker
+#' ---------------------------------------------------------------
 #' @import dplyr
 #' @import stats
 #' @import mgcv
 #' @import progress
 #' @importFrom future.apply future_lapply
 #' @importFrom future plan multisession
-#'
+#' @importFrom progressr with_progress progressor
+
 #' @param dat  Data frame to be modelled
 #' @param list_of_variables_of_interest Character vector of predictors
 #' @param outcome Name of the outcome column
@@ -214,10 +216,11 @@ get_pretty_name <- function(var, dat,
 #'   runs sequentially; otherwise it runs in parallel on the requested
 #'   number of CPU cores using \pkg{future.apply}.
 #'
+
 ModelMakerMulti <- function(dat               = dfRes,
                             list_of_variables_of_interest,
                             outcome           = "res",
-                            family = NULL,
+                            family            = NULL,
                             sf                = 2,
                             name_fun          = NULL,
                             auto_pretty       = TRUE,
@@ -228,14 +231,13 @@ ModelMakerMulti <- function(dat               = dfRes,
                                                       "region_named",
                                                       "ethnic_new",
                                                       "imd_quintile_cat"),
-                            cov_name_list     = NULL,
                             remove_intercept_from_results = TRUE,
                             ncores            = NULL) {
 
   ## ------------------------------------------------------------------ ##
-  ## 1.  Detect outcome type once – used later when renaming columns    ##
+  ## 1.  Detect outcome type (if caller did not supply `family`)        ##
   ## ------------------------------------------------------------------ ##
-  if(is.null(family)){
+  if (is.null(family)) {
     message("No family supplied")
     family <- if (length(unique(dplyr::pull(dat, outcome))) == 2) {
       message("Assuming binomial model")
@@ -246,23 +248,21 @@ ModelMakerMulti <- function(dat               = dfRes,
     }
   }
 
-
   ## ------------------------------------------------------------------ ##
-  ## 2.  Define the workhorse that fits one variable and returns a list ##
+  ## 2.  Workhorse: fit all sequential models for one predictor         ##
   ## ------------------------------------------------------------------ ##
   run_one <- function(var_name) {
     reflev <- levels(dplyr::pull(dat, var_name))[1]
 
-    mod <- modelMakerSequential(variable_name       = var_name,
-                                data                = dat,
-                                outcome             = outcome,
-                                sf                  = sf,
-                                format              = format,
-                                ref_level           = reflev,
+    mod <- modelMakerSequential(variable_name         = var_name,
+                                data                  = dat,
+                                outcome               = outcome,
+                                sf                    = sf,
+                                format                = format,
+                                ref_level             = reflev,
                                 joint_adjustment_vars = joint_adjustment_vars)
 
     names(mod$adj_model_outputs) <- joint_adjustment_vars
-    ## Put crude first, then sequential models for plotting
     mod$adj_model_outputs <- mod$adj_model_outputs[
       c(length(mod$adj_model_outputs),
         seq_len(length(mod$adj_model_outputs) - 1))
@@ -273,10 +273,11 @@ ModelMakerMulti <- function(dat               = dfRes,
   }
 
   ## ------------------------------------------------------------------ ##
-  ## 3.  Decide on sequential vs. parallel processing                   ##
+  ## 3.  Sequential or parallel?                                        ##
   ## ------------------------------------------------------------------ ##
   if (is.null(ncores) || ncores < 2) {
-    ## ----------- sequential with nice progress bar -----------
+
+    ## ---- Sequential with progress::progress_bar ----
     pb <- progress::progress_bar$new(
       format = " Running models [:bar] :percent eta: :eta",
       total  = length(list_of_variables_of_interest),
@@ -287,53 +288,59 @@ ModelMakerMulti <- function(dat               = dfRes,
       pb$tick()
       run_one(v)
     })
+
   } else {
-    ## ----------- parallel using future.apply -----------------
-    ## Use multisession (spawns separate R sessions) – works on Windows, macOS, Linux
-    oplan <- future::plan()
+
+    ## ---- Parallel with future + progressr ----
+    oplan <- future::plan()                             # save user's plan
     on.exit(future::plan(oplan), add = TRUE)
     future::plan(future::multisession, workers = ncores)
 
-    ## progressr gives an optional progress bar if the user has it loaded;
-    ## otherwise future_lapply just prints nothing.
-    results <- future.apply::future_lapply(list_of_variables_of_interest, run_one)
+    results <- progressr::with_progress({
+      p <- progressr::progressor(steps = length(list_of_variables_of_interest))
+      future.apply::future_lapply(
+        list_of_variables_of_interest,
+        function(v) { p(); run_one(v) }
+      )
+    })
   }
 
+  ## ------------------------------------------------------------------ ##
+  ## 4.  Human-friendly variable names                                  ##
+  ## ------------------------------------------------------------------ ##
   pretty_names <- vapply(list_of_variables_of_interest,
                          get_pretty_name,
-                         FUN.VALUE = character(1),
-                         dat       = dat,
-                         name_fun  = name_fun,
+                         FUN.VALUE  = character(1),
+                         dat        = dat,
+                         name_fun   = name_fun,
                          auto_pretty = auto_pretty)
 
   names(results) <- pretty_names
 
-  ## Split back into two separate lists
-  res_list       <- lapply(results, `[[`, "res")
-  plot_res_list  <- lapply(results, `[[`, "plot")
-
   ## ------------------------------------------------------------------ ##
   ## 5.  Assemble final data frames                                     ##
   ## ------------------------------------------------------------------ ##
-  out_df   <- dplyr::bind_rows(res_list,  .id = "Variable") %>%
-    dplyr::rename(Category = Level)
-  out_plot <- dplyr::bind_rows(plot_res_list, .id = "Variable") %>%
+  res_list      <- lapply(results, `[[`, "res")
+  plot_res_list <- lapply(results, `[[`, "plot")
+
+  out_df   <- dplyr::bind_rows(res_list,  .id = "Variable") |>
     dplyr::rename(Category = Level)
 
-  ## Rename columns if gaussian ---------------------------------------
+  out_plot <- dplyr::bind_rows(plot_res_list, .id = "Variable") |>
+    dplyr::rename(Category = Level)
+
   if (family == "gaussian") {
     out_plot <- dplyr::rename(out_plot,  Beta = OR)
     out_df   <- dplyr::rename(out_df, crude_mod_Beta = crude_mod_OR)
   }
 
-  ## Optionally drop intercept rows ------------------------------------
   if (remove_intercept_from_results) {
     out_plot <- dplyr::filter(out_plot, !grepl("Intercept", Category))
     out_df   <- dplyr::filter(out_df,   !grepl("Intercept", Category))
   }
 
   ## ------------------------------------------------------------------ ##
-  ## 6.  Return                                                          ##
+  ## 6.  Return                                                         ##
   ## ------------------------------------------------------------------ ##
   list(df_output   = out_df,
        plot_output = out_plot)

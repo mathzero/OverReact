@@ -12,3 +12,10 @@ LazyData: true
 RoxygenNote: 7.2.0
 Suggests: 
     testthat
+Imports:
+    dplyr,
+    mgcv,
+    progress,
+    future,
+    future.apply,
+    progressr
