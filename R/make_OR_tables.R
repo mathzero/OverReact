@@ -167,95 +167,177 @@ modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",simp
 
 
 
+# Helper that decides how to spell each variable in the output ------------
 
 
-# Multiple model maker ----------------------------------------------------
+get_pretty_name <- function(var, dat,
+                            name_fun = NULL,           # <- optional user function
+                            auto_pretty = TRUE) {      # <- toggle for step 3 above
 
-#' wrapper function for the modelMakerSequential function, which allows you to pass a list of
-#' variables of interest and return 1) a data frame of ORs and concatenated CIs for each level of variable of interest,
-#' 2) a big df of ORs with separate CIs for plotting as a forest plot
+  ## (i)  Session-wide dictionary in options()
+  dict <- getOption("modelmaker.name_map")
+  if (!is.null(dict) && var %in% names(dict)) return(dict[[var]])
 
+  ## (ii)  Label attribute carried by haven / Hmisc / readstat, etc.
+  lbl <- attr(dat[[var]], "label", exact = TRUE)
+  if (!is.null(lbl)) return(lbl)
 
-ModelMakerMulti <- function(dat=dfRes, list_of_variables_of_interest,outcome="res",
-                            sf=2,format="f",simpleround =F,
-                            joint_adjustment_vars = c("age_group_named","sex","region_named",
-                                                      "ethnic_new", "imd_quintile_cat"),
-                            cov_name_list=NULL,
-                            remove_intercept_from_results=T){
-
-  ### DETECT MODEL TYPE (gaussian/binomial)
-  # determine outcome type
-  num_y=length(unique(pull(dat,outcome)))
-  if(num_y==2){
-    family="binomial"
-    print("Assuming binomial model")
-
-  }else{
-    family="gaussian"
-    print("Assuming gaussian model")
-
+  ## (iii) Automatic prettifier
+  if (auto_pretty) {
+    var <- gsub("_", " ", var)
+    var <- tools::toTitleCase(var)
   }
 
-  res_list <- list()
-  plot_res_list <- list()
-  # pb = txtProgressBar(min = 0, max = length(joint_adjustment_vars), initial = 0,style = 3)
+  ## (iv)  Final chance: a user-supplied function
+  if (is.function(name_fun)) var <- name_fun(var)
 
-  # create progress bar
-  pb=progress::progress_bar$new(format = " Running models [:bar] :percent eta: :eta",
-                                width = 100,clear = F,
-                                  total = length(list_of_variables_of_interest))
-
-
-  pb$tick(0)
-  for (i in 1:length(list_of_variables_of_interest)){
-    pb$tick()
-    reflev=levels(pull(dat,list_of_variables_of_interest[[i]]))[[1]]
-    # model
-    mod <- modelMakerSequential(variable_name = list_of_variables_of_interest[[i]],data = dat,outcome = outcome,
-                                sf=sf,format=format,
-                                ref_level =reflev,joint_adjustment_vars = joint_adjustment_vars)
-    res_list[[i]] <- mod$model_df_predictorORs_only
-    names(mod$adj_model_outputs) <- joint_adjustment_vars
-    # mod$adj_model_outputs$crude <- mod$crude_model_output
-    mod$adj_model_outputs <- mod$adj_model_outputs[c(length(mod$adj_model_outputs),1:(length(mod$adj_model_outputs)-1))]
-    plot_res_list[[i]] <- bind_rows(mod$adj_model_outputs, .id = "adjustment")
-  }
-  if(!is.null(cov_name_list)){
-    names(res_list) <- names(plot_res_list) <-cov_name_list[list_of_variables_of_interest]
-  }else{
-    names(res_list) <- names(plot_res_list) <- list_of_variables_of_interest
-
-  }
-  # close(pb)
-
-  out_df <- bind_rows(res_list, .id = "predictor")
-  out_plot <- bind_rows(plot_res_list, .id = "predictor")
-
-  # rename
-  out_df <- out_df %>% dplyr::rename(Variable = predictor,
-                                     Category = Level)
-  out_plot <- out_plot %>% dplyr::rename(Variable = predictor,
-                                     Category = Level)
-
-
-  # rename OR to beta is gaussian
-  if(family=="gaussian"){
-    out_plot <- out_plot %>% dplyr::rename(Beta =OR)
-    out_df <- out_df %>% dplyr::rename(crude_mod_Beta =crude_mod_OR)
-  }
-
-  if(remove_intercept_from_results){
-    out_plot <- out_plot %>% filter(!grepl("Intercept",Category))
-    out_df <- out_df %>% filter(!grepl("Intercept",Category))
-
-  }
-
-
-  return(list(df_output=out_df,
-              plot_output=out_plot))
+  var
 }
 
 
+# Multiple model maker ----------------------------------------------------
+#' @import dplyr
+#' @import stats
+#' @import mgcv
+#' @import progress
+#' @importFrom future.apply future_lapply
+#' @importFrom future plan multisession
+#'
+#' @param dat  Data frame to be modelled
+#' @param list_of_variables_of_interest Character vector of predictors
+#' @param outcome Name of the outcome column
+#' @param sf,format,simpleround  Arguments passed to \code{specifyDecimal()}
+#' @param joint_adjustment_vars Vector of sequential adjustment variables
+#' @param cov_name_list Optional named vector for pretty-printing predictors
+#' @param remove_intercept_from_results Logical; drop “Intercept” rows?
+#' @param ncores Integer.  If \code{NULL} or \code{< 2} the function
+#'   runs sequentially; otherwise it runs in parallel on the requested
+#'   number of CPU cores using \pkg{future.apply}.
+#'
+ModelMakerMulti <- function(dat               = dfRes,
+                            list_of_variables_of_interest,
+                            outcome           = "res",
+                            family = NULL,
+                            sf                = 2,
+                            name_fun          = NULL,
+                            auto_pretty       = TRUE,
+                            format            = "f",
+                            simpleround       = FALSE,
+                            joint_adjustment_vars = c("age_group_named",
+                                                      "sex",
+                                                      "region_named",
+                                                      "ethnic_new",
+                                                      "imd_quintile_cat"),
+                            cov_name_list     = NULL,
+                            remove_intercept_from_results = TRUE,
+                            ncores            = NULL) {
+
+  ## ------------------------------------------------------------------ ##
+  ## 1.  Detect outcome type once – used later when renaming columns    ##
+  ## ------------------------------------------------------------------ ##
+  if(is.null(family)){
+    message("No family supplied")
+    family <- if (length(unique(dplyr::pull(dat, outcome))) == 2) {
+      message("Assuming binomial model")
+      "binomial"
+    } else {
+      message("Assuming gaussian model")
+      "gaussian"
+    }
+  }
+
+
+  ## ------------------------------------------------------------------ ##
+  ## 2.  Define the workhorse that fits one variable and returns a list ##
+  ## ------------------------------------------------------------------ ##
+  run_one <- function(var_name) {
+    reflev <- levels(dplyr::pull(dat, var_name))[1]
+
+    mod <- modelMakerSequential(variable_name       = var_name,
+                                data                = dat,
+                                outcome             = outcome,
+                                sf                  = sf,
+                                format              = format,
+                                ref_level           = reflev,
+                                joint_adjustment_vars = joint_adjustment_vars)
+
+    names(mod$adj_model_outputs) <- joint_adjustment_vars
+    ## Put crude first, then sequential models for plotting
+    mod$adj_model_outputs <- mod$adj_model_outputs[
+      c(length(mod$adj_model_outputs),
+        seq_len(length(mod$adj_model_outputs) - 1))
+    ]
+
+    list(res  = mod$model_df_predictorORs_only,
+         plot = dplyr::bind_rows(mod$adj_model_outputs, .id = "adjustment"))
+  }
+
+  ## ------------------------------------------------------------------ ##
+  ## 3.  Decide on sequential vs. parallel processing                   ##
+  ## ------------------------------------------------------------------ ##
+  if (is.null(ncores) || ncores < 2) {
+    ## ----------- sequential with nice progress bar -----------
+    pb <- progress::progress_bar$new(
+      format = " Running models [:bar] :percent eta: :eta",
+      total  = length(list_of_variables_of_interest),
+      width  = 100, clear = FALSE)
+    pb$tick(0)
+
+    results <- lapply(list_of_variables_of_interest, function(v) {
+      pb$tick()
+      run_one(v)
+    })
+  } else {
+    ## ----------- parallel using future.apply -----------------
+    ## Use multisession (spawns separate R sessions) – works on Windows, macOS, Linux
+    oplan <- future::plan()
+    on.exit(future::plan(oplan), add = TRUE)
+    future::plan(future::multisession, workers = ncores)
+
+    ## progressr gives an optional progress bar if the user has it loaded;
+    ## otherwise future_lapply just prints nothing.
+    results <- future.apply::future_lapply(list_of_variables_of_interest, run_one)
+  }
+
+  pretty_names <- vapply(list_of_variables_of_interest,
+                         get_pretty_name,
+                         FUN.VALUE = character(1),
+                         dat       = dat,
+                         name_fun  = name_fun,
+                         auto_pretty = auto_pretty)
+
+  names(results) <- pretty_names
+
+  ## Split back into two separate lists
+  res_list       <- lapply(results, `[[`, "res")
+  plot_res_list  <- lapply(results, `[[`, "plot")
+
+  ## ------------------------------------------------------------------ ##
+  ## 5.  Assemble final data frames                                     ##
+  ## ------------------------------------------------------------------ ##
+  out_df   <- dplyr::bind_rows(res_list,  .id = "Variable") %>%
+    dplyr::rename(Category = Level)
+  out_plot <- dplyr::bind_rows(plot_res_list, .id = "Variable") %>%
+    dplyr::rename(Category = Level)
+
+  ## Rename columns if gaussian ---------------------------------------
+  if (family == "gaussian") {
+    out_plot <- dplyr::rename(out_plot,  Beta = OR)
+    out_df   <- dplyr::rename(out_df, crude_mod_Beta = crude_mod_OR)
+  }
+
+  ## Optionally drop intercept rows ------------------------------------
+  if (remove_intercept_from_results) {
+    out_plot <- dplyr::filter(out_plot, !grepl("Intercept", Category))
+    out_df   <- dplyr::filter(out_df,   !grepl("Intercept", Category))
+  }
+
+  ## ------------------------------------------------------------------ ##
+  ## 6.  Return                                                          ##
+  ## ------------------------------------------------------------------ ##
+  list(df_output   = out_df,
+       plot_output = out_plot)
+}
 
 
 

@@ -68,11 +68,12 @@ comma_thousands=F
 include_percentages=T
 addNobsTopRow=T
 cov_names=NULL
+
 # Run models --------------------------------------------------------------
 
 myvars=c("x1","x2","x3","x4")
 mymods=ModelMakerMulti(dat = dat,list_of_variables_of_interest = myvars,outcome = "y",sf = 2,
-                       simpleround = T,
+                       simpleround = T,ncores = 10,
                        joint_adjustment_vars = myvars,cov_name_list = NULL)
 mymods$plot_output
 mymods$df_output
@@ -82,5 +83,5 @@ mod=glm(as.formula("y~x1"),family = "gaussian",data = dat)
 summary(mod)
 
 makeORTable(mod)
-
+future::plan("sequential")
 
