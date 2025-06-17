@@ -26,7 +26,7 @@ modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",simp
                                                            "ethnic_new", "imd_quintile_cat")){
 
   # determine outcome type
-  num_y=length(unique(pull(data,outcome)))
+  num_y=length(unique(dplyr::pull(data,outcome)))
   if(num_y==2){
     # print("Assuming binomial model")
     family="binomial"
