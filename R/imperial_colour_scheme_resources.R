@@ -45,15 +45,16 @@ imperial_palettes <- list(
 
   `default` = imperial_cols(
     "Navy_Blue",
+    "Orange_Red",
     "Teal",
     "Turquoise",
     "Lime",
-    "Orange_Red",
+    "Khaki",
+    "Slate_Gray",
     "Violet",
-    "Dark_Green",
-    "Deep_Sky_Blue",
     "Saddle_Brown",
-    "Khaki"
+    "Dark_Green",
+    "Deep_Sky_Blue"
   ),
 
   `earth` = imperial_cols(

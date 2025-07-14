@@ -1,4 +1,5 @@
 library(tidyverse)
+library(OverReact)
 
 
 ### source all relevant scripts
@@ -7,7 +8,7 @@ lapply(scripts,source)
 
 set.seed(123)
 ### create dummy data
-n=1000000
+n=100000
 dat=data.frame(x1=rnorm(n =n,mean = 0,sd = 1),
                x2=rnorm(n =n,mean = 0,sd = 1),
                x3=rnorm(n =n,mean = 0,sd = 1),
@@ -70,6 +71,7 @@ addNobsTopRow=T
 cov_names=NULL
 
 # Run models --------------------------------------------------------------
+options(modelmaker.name_map=c(x1="X1 var",x2="X2 var",x3="X3 var",x4="X4 var"))
 
 myvars=c("x1","x2","x3","x4")
 mymods=ModelMakerMulti(dat = dat,list_of_variables_of_interest = myvars,outcome = "y",sf = 2,

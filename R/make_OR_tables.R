@@ -312,8 +312,6 @@ ModelMakerMulti <- function(dat                         = dfRes,
   ## --------------------------------------------------------------------------
   ## 2.  Assemble & label ------------------------------------------------------
   ## --------------------------------------------------------------------------
-  res_list       <- lapply(results, `[[`, "tidy_res")
-  plot_res_list  <- lapply(results, `[[`, "tidy_plot")
 
   pretty_names <- vapply(list_of_variables_of_interest,
                          get_pretty_name,
@@ -323,6 +321,10 @@ ModelMakerMulti <- function(dat                         = dfRes,
                          auto_pretty = auto_pretty)
 
   names(results) <- pretty_names
+
+  res_list       <- lapply(results, `[[`, "tidy_res")
+  plot_res_list  <- lapply(results, `[[`, "tidy_plot")
+
 
   out_df   <- dplyr::bind_rows(res_list,  .id = "Variable")
   out_plot <- dplyr::bind_rows(plot_res_list, .id = "Variable")

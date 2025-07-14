@@ -1,4 +1,3 @@
-
 #' @import dplyr
 #' @import stats
 #' @import mgcv
@@ -24,375 +23,392 @@
 #' @param includeNAsRowvar Boolean - include NA values as a separate group in the table rows
 #' @param formatPvalsForEpiPaper Boolean - if TRUE, add asterisks to pvalues and round
 
+################################################################################
+# Robust versions of the "table*" helper functions (v2) -----------------------
+#  - Fixes superfluous final column "NA." that appeared when the column-level
+#    variable contained real NA values (because `as.data.frame.matrix()`
+#    silently converts an NA column‑name to the literal string "NA.").
+#  - We now normalise column names straight after the conversion step so that
+#    *both* NA and "NA." are replaced by a single canonical "NA" label.
+################################################################################
 
 
-# Cross tab function (generalisible) --------------------------------------
+# -----------------------------------------------------------------------------
+# Helper: safe χ² test ---------------------------------------------------------
+# -----------------------------------------------------------------------------
+.safe_chisq <- function(tab, rowvar, colvar) {
+  tryCatch({
+    if (all(tab == 0)) stop("All table cells are zero – χ² not defined")
+    suppressWarnings(chisq.test(tab))
+  }, error = function(e) {
+    message(sprintf("Chi-squared test failed for '%s' × '%s': %s", rowvar, colvar, e$message))
+    list(p.value = NA_real_)
+  })
+}
 
-
-# Simple cross-tab function, with %s
+# -----------------------------------------------------------------------------
+# Simple cross-tabulation for categorical variables ---------------------------
+# -----------------------------------------------------------------------------
 tableCat <- function(dat,
-                      rowvar,
-                      colvar,
-                      confint =T,
-                      include_percentages=T,
-                      rowwise_precentages = T,
-                      weights=NULL,
-                      comma_thousands = F,
-                      statistical_test = F,
-                      includeNAsColvar=T,
-                      includeNAsRowvar=T){
+                     rowvar,
+                     colvar,
+                     confint = TRUE,
+                     include_percentages = TRUE,
+                     rowwise_precentages = TRUE,
+                     weights = NULL,
+                     comma_thousands = FALSE,
+                     statistical_test = FALSE,
+                     includeNAsColvar = TRUE,
+                     includeNAsRowvar = TRUE) {
 
-
-  if(includeNAsColvar & sum(is.na(pull(dat,colvar)))>0){
-    colvect=addNA(pull(dat,colvar))
-  }else{
-    colvect=(pull(dat,colvar))
+  # ---- guard clauses --------------------------------------------------------
+  if (!rowvar %in% names(dat)) {
+    message(sprintf("Variable '%s' not found – skipping cross-tab.", rowvar))
+    return(NULL)
+  }
+  if (!colvar %in% names(dat)) {
+    stop(sprintf("Column variable '%s' not found in data frame.", colvar))
+  }
+  if (!is.null(weights) && !weights %in% names(dat)) {
+    stop(sprintf("Weights variable '%s' not found in data frame.", weights))
   }
 
-  NAswitch=includeNAsRowvar & sum(is.na(pull(dat,rowvar)))>0
-  if(NAswitch){
-
-    rowvect=addNA(pull(dat,rowvar))
-    useNA="ifany"
-    na.show=T
-    na.rm=F
-  }else{
-    rowvect=(pull(dat,rowvar))
-    useNA="no"
-    na.show=F
-    na.rm=T
+  # ---- prepare vectors ------------------------------------------------------
+  if (includeNAsColvar && any(is.na(pull(dat, colvar)))) {
+    colvect <- addNA(pull(dat, colvar))
+  } else {
+    colvect <- pull(dat, colvar)
   }
 
-
-
-  # weights
-  if(is.null(weights)){
-    tab <- (table(rowvect, colvect,useNA=useNA))
-  }else{
-    tab <- (round(questionr::wtd.table(x=rowvect,
-                                       y= colvect,
-                                       weights = pull(dat, weights),
-                                       normwt = F,
-                                       na.rm = na.rm,
-                                       na.show = na.show),0))
+  NAswitch <- includeNAsRowvar && any(is.na(pull(dat, rowvar)))
+  if (NAswitch) {
+    rowvect <- addNA(pull(dat, rowvar))
+    useNA   <- "ifany"
+    na.show <- TRUE
+    na.rm   <- FALSE
+  } else {
+    rowvect <- pull(dat, rowvar)
+    useNA   <- "no"
+    na.show <- FALSE
+    na.rm   <- TRUE
   }
 
-  # statstical test
-  if(statistical_test){
-    pval=suppressWarnings(chisq.test(tab))
+  # ---- weighted vs. unweighted table ---------------------------------------
+  if (is.null(weights)) {
+    tab <- table(rowvect, colvect, useNA = useNA)
+  } else {
+    tab <- round(questionr::wtd.table(x = rowvect, y = colvect,
+                                      weights = pull(dat, weights),
+                                      normwt  = FALSE,
+                                      na.rm   = na.rm,
+                                      na.show = na.show), 0)
   }
 
+  # ---- statistical test -----------------------------------------------------
+  if (statistical_test) pval <- .safe_chisq(tab, rowvar, colvar)
 
-  # levs
-  levs=rownames(tab)
+  # ---- prettifying levels ---------------------------------------------------
+  levs <- rownames(tab)
   levs[is.na(levs)] <- "NA"
 
+  # ---- add margins and, if requested, percentages ---------------------------
+  tab <- tab %>% addmargins(margin = 2) %>% as.data.frame.matrix()
 
-  # add margins
-  tab=tab %>% addmargins(margin = 2) %>% as.data.frame.matrix()
-
-  # tab <- addmargins(table(pull(dat,rowvar), pull(dat,colvar))) %>% as.data.frame.matrix()
-  if(rowwise_precentages){
-    tab.prop <- round(100*prop.table(table(rowvect, colvect),1),1) %>% as.data.frame.matrix()
-    tab.prop[,"sum"] <- ""
-  }else{
-    tab.prop <- round(100*prop.table(table(rowvect, colvect),2),1) %>% as.data.frame.matrix()
-    tab.prop[,"sum"] <- round(100*prop.table(table(rowvect)),1)
-
+  # *** FIX: normalise column names right here ********************************
+  names(tab)[is.na(names(tab)) | names(tab) == "NA."] <- "NA"
+  # If normalisation created duplicate "NA" columns (e.g. both "NA" & "NA." existed)
+  # keep the first and silently drop the rest – their values are identical.
+  if (anyDuplicated(names(tab))) {
+    tab <- tab[, !duplicated(names(tab)), drop = FALSE]
   }
-  tab_bu <- tab
-  if(comma_thousands){
-    tabcomma=lapply(tab, comma_sep) %>% as.data.frame()
-    colnames(tabcomma)= colnames(tab)
-    tab=as.data.frame(tabcomma)
+  # ***********************************************************************************************
+  names(tab)[is.na(names(tab)) | names(tab) == "NA."] <- "NA"
+  # ****************************************************************************
+
+  tab_bu <- tab  # back‑up for CI calculations
+
+  if (rowwise_precentages) {
+    tab.prop         <- round(100 * prop.table(table(rowvect, colvect), 1), 1) %>%
+      as.data.frame.matrix()
+    names(tab.prop)[is.na(names(tab.prop)) | names(tab.prop) == "NA."] <- "NA"
+    tab.prop[, "sum"] <- ""
+  } else {
+    tab.prop         <- round(100 * prop.table(table(rowvect, colvect), 2), 1) %>%
+      as.data.frame.matrix()
+    names(tab.prop)[is.na(names(tab.prop)) | names(tab.prop) == "NA."] <- "NA"
+    tab.prop[, "sum"] <- round(100 * prop.table(table(rowvect)), 1)
   }
-  if(include_percentages){
-    if(confint){
-      for (i in 1:(nrow(tab))){
-        for(j in 1:(ncol(tab))){
-          if(rowwise_precentages){
-            ci <- calculate_prop_ci(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[i,ncol(tab_bu)]), method = "wilson")
-          }else{
-            ci <- calculate_prop_ci(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[nrow(tab_bu),j]), method = "wilson")
+
+  # ---- comma‑separation of thousands ---------------------------------------
+  if (comma_thousands) {
+    tab <- lapply(tab, comma_sep) %>% as.data.frame()
+    colnames(tab) <- colnames(tab_bu)
+  }
+
+  # ---- attach percentages / CIs -------------------------------------------
+  if (include_percentages) {
+    for (i in seq_len(nrow(tab))) {
+      for (j in seq_len(ncol(tab))) {
+        if (j == ncol(tab)) {  # total column
+          if (confint) {
+            ci <- calculate_prop_ci(tab_bu[i, j], tab_bu[i, ncol(tab_bu)], method = "wilson")
+            tab[i, j] <- sprintf("%s (%.1f%%)", tab[i, j], 100 * ci$proportion)
+          } else {
+            tab[i, j] <- as.character(tab[i, j])
           }
-          if(j==ncol(tab)){
-            tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$proportion,1),"%)")
-          }else{
-            tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$proportion,1),"%, [",round(100*ci$lower,1),"-",round(100*ci$upper,1),"])")
+        } else {
+          if (confint) {
+            denom <- if (rowwise_precentages) tab_bu[i, ncol(tab_bu)] else tab_bu[nrow(tab_bu), j]
+            ci <- calculate_prop_ci(tab_bu[i, j], denom, method = "wilson")
+            tab[i, j] <- sprintf("%s (%.1f%%, [%.1f–%.1f])", tab[i, j], 100 * ci$proportion,
+                                 100 * ci$lower, 100 * ci$upper)
+          } else {
+            tab[i, j] <- sprintf("%s (%.1f%%)", tab[i, j], tab.prop[i, j])
           }
         }
       }
-    }else{
-      for (i in 1:(nrow(tab))){
-        for(j in 1:(ncol(tab))){
-          if(j==ncol(tab)){
-            tab[i,j] <-  as.character(tab[i,j])
-          }else{
-            tab[i,j] <-  paste0(tab[i,j], " (",tab.prop[i,j],"%)")
-          }
-        }
-      }
-      # for(j in 1:ncol(tab)){
-      #   prop <- round(100*(as.numeric(tab_bu[nrow(tab),j]) / as.numeric(tab_bu[nrow(tab),ncol(tab)])),1)
-      #   tab[nrow(tab),j] <-  paste0(tab[nrow(tab),j], " (",prop,"%)")
-      # }
     }
   }
 
-  # Add number of non-zero observations
-  rv=pull(dat, rowvar)
-  rv_non_na=sum(!is.na(rv))
-  rv_na=sum(is.na(rv))
-  tab$Missing=c(rv_na,rep(" ",nrow(tab)-1))
-  names(tab)[is.na(names(tab))] <- "NA"
+  # ---- assemble final data‑frame ------------------------------------------
+  rv_na <- sum(is.na(pull(dat, rowvar)))
+  header_row <- tab[1, , drop = FALSE]; header_row[1, ] <- ""
+  tab <- rbind(header_row, tab)
+  tab$Missing <- c(rv_na, rep("", nrow(tab) - 1))
 
-  # add p-value
-  if(statistical_test){
-    tab[["P-value"]] = pval$p.value
+  if (statistical_test) {
+    if (!"P-value" %in% names(tab)) tab$`P-value` <- NA_real_
+    tab[["P-value"]][1] <- pval$p.value
   }
 
-  # add level and variable
-  tab$Level <- levs
+  tab$Level <- c("", levs)
+  tab$units <- c(", n (%)", rep(" ", nrow(tab) - 1))
 
-  # variable
-  var_sum <- paste0(", n (%)")
+  tab <- tab %>%
+    dplyr::select(units, Level, Missing, Sum, everything()) %>%
+    dplyr::rename(Overall = Sum) %>%
+    dplyr::mutate(Level = if_else(Level == "NA.", "[NA]", Level))
 
-  # add variable
-  tab$units <- c(var_sum,rep(" ",nrow(tab)-1))
-
-  # reorder
-  tab <- tab %>% dplyr::select(units,Level, Missing, Sum,everything()) %>%
-    dplyr::rename(Overall=Sum) %>%
-    dplyr::mutate(Level=case_when(Level=="NA." ~ "[NA]",
-                                  T ~ Level))
-
-  return(tab)
+  tab
 }
 
+# -----------------------------------------------------------------------------
+# Cross‑tab for continuous variables ------------------------------------------
+# -----------------------------------------------------------------------------
 
-
-# Function to do x-tab for contiuous variables
 tableCont <- function(dat,
-                     rowvar,
-                     colvar=NULL,
-                     weights = NULL,
-                     summary_stat="mean",
-                     statistical_test=F,
-                     includeNAsColvar=T,
-                     includeNAsRowvar=T
-){
+                      rowvar,
+                      colvar = NULL,
+                      weights = NULL,
+                      summary_stat = "mean",
+                      statistical_test = FALSE,
+                      includeNAsColvar = TRUE,
+                      includeNAsRowvar = TRUE) {
 
-  if(is.null(colvar)){
-    colvar="dummy"
-    dat$dummy="Dummy"
+  # ---- guard clauses --------------------------------------------------------
+  if (!rowvar %in% names(dat)) {
+    message(sprintf("Variable '%s' not found – skipping.", rowvar))
+    return(NULL)
   }
-  if(includeNAsColvar & sum(is.na(pull(dat,colvar)))>0){
-    colvect=addNA(pull(dat,colvar))
-  }else{
-    colvect=(pull(dat,colvar))
+  if (!is.null(colvar) && !colvar %in% names(dat)) {
+    stop(sprintf("Column variable '%s' not found in data frame.", colvar))
   }
-
-
-  if(tolower(summary_stat)=="mean"){
-    if(!is.null(weights)){
-      means <- sapply(split(dat,as.factor(colvect)), function(x) stats::weighted.mean(pull(x, rowvar),pull(x, weights), na.rm=T)) %>%
-        as.table()%>% as.data.frame()
-      sds <- plyr::ddply(dat,colvar, function(x) Hmisc::wtd.var(pull(x, rowvar),pull(x, weights))) %>% as.data.frame()
-      means$Freq <- round(means$Freq,2)
-      # root variance to get sd
-      colnames(sds) <- colnames(means)
-      sds$Freq <- round(sqrt(as.numeric(sds$Freq)),2)
-    }
-    else{
-      means <- (round(by(pull(dat, rowvar),colvect, mean, na.rm=T),2)) %>% as.table(exclude="none")%>% as.data.frame()
-      sds <- unlist(round(by(pull(dat, rowvar),colvect, sd, na.rm=T),2))%>% as.table(exclude="none")%>% as.data.frame()
-    }
-    names(means) <- c("Category", "mean")
-    names(sds) <- c("Category","sd")
-    statname="Mean (SD)"
-    means$Category <- as.character(addNA(means$Category))
-    sds$Category <- as.character(addNA(sds$Category))
-    means$Category[is.na((means$Category))] <- "NA"
-    sds$Category[is.na((sds$Category))] <- "NA"
-
-
-    uniques <- as.character(unique(colvect))
-    if(includeNAsColvar){
-      uniques[is.na(uniques)] <- "NA"
-    }else{
-      uniques <- uniques[!is.na(uniques)]
-      }
-    tab <- data.frame(matrix(nrow = 1, ncol=length(uniques),dimnames = list(NULL,c( uniques))))
-    names(tab) <- uniques
-    # tab$Category <- statname
-    for (x in 1:length(uniques)){
-      tab[1,which(colnames(tab)==uniques[[x]])] <- paste0(means[means$Category == uniques[[x]],]$mean,
-                                                          " (",
-                                                          sds[sds$Category == uniques[[x]],]$sd,")")
-    }
-    tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
-
-  }else if(tolower(summary_stat)=="median"){
-    means <- (round(by(pull(dat, rowvar),colvect, median, na.rm=T),2)) %>% as.table()%>% as.data.frame()
-    sds <- unlist(round(by(pull(dat, rowvar),colvect, IQR, na.rm=T),2))%>% as.table()%>% as.data.frame()
-    names(means) <- c("Category", "median")
-    names(sds) <- c("Category","IQR")
-    statname="Median (IQR)"
-    means$Category <- as.character(addNA(means$Category))
-    sds$Category <- as.character(addNA(sds$Category))
-    means$Category[is.na((means$Category))] <- "NA"
-    sds$Category[is.na((sds$Category))] <- "NA"
-
-    uniques <- as.character(unique(colvect))
-    if(includeNAsColvar){
-      uniques[is.na(uniques)] <- "NA"
-    }else{
-      uniques <- uniques[!is.na(uniques)]
-    }
-    tab <- data.frame(matrix(nrow = 1, ncol=length(uniques),dimnames = list(NULL,c( uniques))))
-    names(tab)[c(1:(ncol(tab)-1))] <- uniques
-    # tab$Category <- statname
-
-    for (x in 1:length(uniques)){
-      tab[1,colnames(tab)==uniques[[x]]] <- paste0(means[means$Category == uniques[[x]],]$median,
-                                                   " (",
-                                                   sds[sds$Category == uniques[[x]],]$IQR,")")
-
-    }
-    tab$Sum = paste0(round(median(pull(dat, rowvar), na.rm=T),2), " (",round(IQR(pull(dat, rowvar), na.rm=T),2),")")
-
-
-  }else{
-    print("summary_stat not valid. Please choose from 'mean' or 'median'")
-    break
+  if (!is.null(weights) && !weights %in% names(dat)) {
+    stop(sprintf("Weights variable '%s' not found in data frame.", weights))
   }
 
+  if (is.null(colvar)) {
+    colvar <- "dummy"; dat$dummy <- "Dummy"
+  }
 
-  # Add number of non-zero observations
-  rv=pull(dat, rowvar)
-  rv_non_na=sum(!is.na(rv))
-  rv_na=sum(is.na(rv))
-  tab$Missing=c(rv_na,rep(" ",nrow(tab)-1))
-  names(tab)[is.na(names(tab))] <- "NA"
+  if (includeNAsColvar && any(is.na(pull(dat, colvar)))) {
+    colvect <- addNA(pull(dat, colvar))
+  } else {
+    colvect <- pull(dat, colvar)
+  }
 
+  summary_stat <- tolower(summary_stat)
+  if (!summary_stat %in% c("mean", "median")) {
+    stop("'summary_stat' must be 'mean' or 'median'.")
+  }
 
-  # add level and variable
+  calc_fun   <- if (summary_stat == "mean") mean else median
+  spread_fun <- if (summary_stat == "mean") sd   else IQR
+
+  # ---- basic stats ----------------------------------------------------------
+  means   <- round(by(pull(dat, rowvar), colvect, calc_fun, na.rm = TRUE), 2)
+  spreads <- round(by(pull(dat, rowvar), colvect, spread_fun, na.rm = TRUE), 2)
+
+  means   <- as.table(means,   exclude = "none") %>% as.data.frame()
+  spreads <- as.table(spreads, exclude = "none") %>% as.data.frame()
+  names(means)   <- c("Category", "centre")
+  names(spreads) <- c("Category", "spread")
+
+  means$Category   <- as.character(addNA(means$Category))
+  spreads$Category <- as.character(addNA(spreads$Category))
+  means$Category[is.na(means$Category)]     <- "NA"
+  spreads$Category[is.na(spreads$Category)] <- "NA"
+
+  uniques <- unique(as.character(colvect))
+  if (includeNAsColvar) uniques[is.na(uniques)] <- "NA" else uniques <- uniques[!is.na(uniques)]
+
+  tab <- data.frame(matrix(nrow = 1, ncol = length(uniques), dimnames = list(NULL, uniques)),
+                    stringsAsFactors = FALSE)
+
+  for (u in uniques) {
+    tab[[u]] <- sprintf("%s (%s)", means$centre[means$Category == u], spreads$spread[spreads$Category == u])
+  }
+
+  overall_centre <- calc_fun(pull(dat, rowvar), na.rm = TRUE)
+  overall_spread <- spread_fun(pull(dat, rowvar), na.rm = TRUE)
+  tab$Sum <- sprintf("%s (%s)", round(overall_centre, 2), round(overall_spread, 2))
+
+  rv_na <- sum(is.na(pull(dat, rowvar)))
+  tab$Missing <- c(rv_na, rep(" ", nrow(tab) - 1))
+
+  # *** FIX: normalise column names again *************************************
+  names(tab)[is.na(names(tab)) | names(tab) == "NA."] <- "NA"
+  if (anyDuplicated(names(tab))) tab <- tab[, !duplicated(names(tab)), drop = FALSE]
+  # ****************************************************************************************************
+  names(tab)[is.na(names(tab)) | names(tab) == "NA."] <- "NA"
+  # ****************************************************************************
+
   tab$Level <- ""
+  var_sum <- sprintf(", %s (%s)", summary_stat, ifelse(summary_stat == "mean", "SD", "IQR"))
+  tab$units <- c(var_sum, rep(" ", nrow(tab) - 1))
 
-  # variable
-  var_sum <- paste0(", ",summary_stat," (",ifelse(tolower(summary_stat)=="mean", "SD","IQR"),")")
+  tab <- tab %>% dplyr::select(units, Level, Missing, Sum, everything()) %>% dplyr::rename(Overall = Sum)
 
-  # add variable
-  tab$units <- c(var_sum,rep(" ",nrow(tab)-1))
+  if (statistical_test) {
+    pval <- tryCatch({
+      mod <- lm(as.formula(paste0(rowvar, " ~ `", colvar, "`")), data = dat)
+      anova(mod)$`Pr(>F)`[1]
+    }, error = function(e) {
+      message(sprintf("ANOVA failed for '%s' ~ '%s': %s", rowvar, colvar, e$message)); NA_real_
+    })
+    tab$`P-value` <- pval
+  }
 
-  # reorder
-  tab <- tab %>% dplyr::select(units,Level, Missing, Sum,everything()) %>%
-    dplyr::rename(Overall=Sum)
-
-
-
-  if(statistical_test){
-    mod=lm(dat[[rowvar]]~colvect)
-    mod=lm(formula = as.formula(paste0(rowvar," ~ ",colvar)), data = dat)
-    modanova=anova(mod)
-    pval=modanova$`Pr(>F)`
-    tab[["P-value"]]=pval[[1]]
-      }
-
-  return(tab)
+  tab
 }
+# -----------------------------------------------------------------------------
+# Main wrapper remains unchanged except it naturally benefits from the fixes --
+# -----------------------------------------------------------------------------
 
 
+# -----------------------------------------------------------------------------
+# Main wrapper: multiple variables -------------------------------------------
+# -----------------------------------------------------------------------------
 
-
-### Generalise the xtab function to do multiple covariates at once
 tableOne <- function(dat,
                      rowvars,
-                     colvar=NULL,
-                     cov_names=NULL,
-                     confint=F,
-                     include_percentages = T,
-                     rowwise_precentages = T,
+                     colvar = NULL,
+                     cov_names = NULL,
+                     confint = FALSE,
+                     include_percentages = TRUE,
+                     rowwise_precentages = TRUE,
                      weights = NULL,
-                     summary_stat="mean",
-                     comma_thousands = F,
-                     statistical_test = F,
-                     includeNAsColvar=T,
-                     includeNAsRowvar=T,
-                     formatPvalsForEpiPaper=F,
-                     addNobsTopRow=T){
+                     summary_stat = "mean",
+                     comma_thousands = FALSE,
+                     statistical_test = FALSE,
+                     includeNAsColvar = TRUE,
+                     includeNAsRowvar = TRUE,
+                     formatPvalsForEpiPaper = FALSE,
+                     addNobsTopRow = TRUE) {
 
-  if(!statistical_test){
-    formatPvalsForEpiPaper=F
+  if (!statistical_test) formatPvalsForEpiPaper <- FALSE
+
+  summary_stat <- tolower(summary_stat)
+  if (!summary_stat %in% c("mean", "median")) {
+    stop("Please choose 'mean' or 'median' for summary_stat.")
   }
 
-  if(!summary_stat %in% c("mean","median")){
-    print("Please choose 'mean' or 'median' for summary_stat")
+  if (is.null(colvar)) {
+    colvar <- "dummy"
+    dat$dummy <- "All data"
   }
 
-  if(is.null(colvar)){
-    colvar="dummy"
-    dat$dummy="All data"
-  }
-
-    if(addNobsTopRow){
-    dat$Observations=" "
-    rowvars <- c("Observations",setdiff(rowvars,"Observations"))
-    cov_names[["Observations"]] <- "Observations"
-  }
-
-
-  res_list <- list()
-  for (i in 1:length(rowvars)){
-    print(paste0("Processing ",rowvars[[i]]))
-    if(class(pull(dat, rowvars[[i]])) %in% c("integer", "numeric") &
-       !all(names(table(pull(dat, rowvars[[i]]))) %in% c("0", "1"))){
-      res <- tableCont(dat = dat,rowvar = rowvars[[i]], colvar = colvar,summary_stat=summary_stat,
-                      statistical_test=statistical_test,includeNAsColvar = includeNAsColvar,
-                      includeNAsRowvar = includeNAsRowvar)
-
-    }else{
-      res <- tableCat(dat = dat,rowvar = rowvars[[i]], colvar = colvar,confint = confint,
-                       include_percentages=include_percentages,
-                       rowwise_precentages = rowwise_precentages,
-                       weights=weights, comma_thousands = comma_thousands,
-                       statistical_test=statistical_test,includeNAsColvar = includeNAsColvar,
-                       includeNAsRowvar = includeNAsRowvar)
+  # ---- tidy / validate cov_names -------------------------------------------
+  if (!is.null(cov_names)) {
+    if (is.list(cov_names)) {
+      cov_names <- unlist(cov_names, use.names = TRUE, recursive = FALSE)
     }
-    # res$ <- as.character(res$Sum)
-    res_list[[i]] <- res
+    if (is.null(names(cov_names))) {
+      stop("'cov_names' must be a *named* list or vector.")
+    }
   }
 
-
-  if(!is.null(cov_names)){
-    names(res_list) <- cov_names[rowvars]
-  }else{
-    names(res_list) <- rowvars
+  # ---- optionally prepend observation count row ----------------------------
+  if (addNobsTopRow) {
+    dat$Observations <- " "
+    rowvars <- c("Observations", setdiff(rowvars, "Observations"))
+    if (is.null(cov_names)) cov_names <- character()
+    cov_names["Observations"] <- "Observations"
   }
 
+  # ---- iterate over variables ---------------------------------------------
+  res_list <- list()
+  for (rv in rowvars) {
+    if (!rv %in% names(dat)) {
+      message(sprintf("Variable '%s' missing – omitted from table.", rv))
+      next
+    }
+
+    message(sprintf("Processing '%s'", rv))
+
+    if (is.numeric(pull(dat, rv)) &&
+        !all(names(table(pull(dat, rv))) %in% c("0", "1"))) {
+
+      res <- tableCont(dat = dat, rowvar = rv, colvar = colvar,
+                       summary_stat = summary_stat, statistical_test = statistical_test,
+                       includeNAsColvar = includeNAsColvar, includeNAsRowvar = includeNAsRowvar,
+                       weights = weights)
+    } else {
+      res <- tableCat(dat = dat, rowvar = rv, colvar = colvar, confint = confint,
+                      include_percentages = include_percentages,
+                      rowwise_precentages = rowwise_precentages, weights = weights,
+                      comma_thousands = comma_thousands,
+                      statistical_test = statistical_test,
+                      includeNAsColvar = includeNAsColvar, includeNAsRowvar = includeNAsRowvar)
+    }
+    if (!is.null(res)) res_list[[rv]] <- res
+  }
+
+  if (!length(res_list)) {
+    stop("No valid row variables to tabulate – nothing to do.")
+  }
+
+  # ---- name each block ------------------------------------------------------
+  name_vec <- if (!is.null(cov_names)) {
+    nm <- cov_names[names(res_list)]
+    nm[is.na(nm)] <- names(res_list)[is.na(nm)]
+    nm
+  } else {
+    names(res_list)
+  }
+  names(res_list) <- name_vec
+
+  # ---- bind into a single data‑frame ---------------------------------------
   out <- dplyr::bind_rows(res_list, .id = "V") %>%
-    dplyr::mutate(Variable= case_when(units==" " ~" ",
-                                      T ~  paste0(V,units))) %>%
-              dplyr::select(-units,-V) %>%
+    dplyr::mutate(Variable = if_else(units == " ", " ", paste0(V, units))) %>%
+    dplyr::select(-units, -V) %>%
     dplyr::select(Variable, everything())
 
-
-  if(formatPvalsForEpiPaper){
-    out$`P-value` <- as.character(pvalAsterisker(p_values = out$`P-value`,return_p = T,return_ns = F,round_to = 4))
-    dupePvals = out$Variable==" "
-    if(length(dupePvals) > 0){
-      out$`P-value`[dupePvals] <- " "
-    }
+  # ---- p‑value formatting for epi papers -----------------------------------
+  if (formatPvalsForEpiPaper && "P-value" %in% names(out)) {
+    out$`P-value` <- as.character(pvalAsterisker(p_values = out$`P-value`,
+                                                 return_p = TRUE, return_ns = FALSE, round_to = 4))
+    dupePvals <- out$Variable == " "
+    if (any(dupePvals)) out$`P-value`[dupePvals] <- " "
   }
 
-  # clean rownames
+  # ---- tidy -----------------------------------------------------------------
   rownames(out) <- NULL
+  out$Variable[out$Variable == "Observations, n (%)"] <- "N (%)"
 
-  # tidy up observation row
-  out$Variable[(out$Variable=="Observations, n (%)")] <- "N (%)"
-
-  return(out)
+  out
 }
+
 
 
 calculate_prop_ci <- function(x, n, method = "wilson") {
@@ -444,11 +460,3 @@ calculate_prop_ci <- function(x, n, method = "wilson") {
 
   return(result)
 }
-
-# Example usage:
-# Calculate a 95% confidence interval for 10 x in 20 n
-ci_normal <- calculate_prop_ci(x = 10, n = 20, method = "wilson")
-
-print(ci_normal)
-
-
