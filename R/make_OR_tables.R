@@ -42,7 +42,7 @@ get_vif_df <- function(fit, step_lbl, adj_no) {
 
   data.frame(model      = step_lbl,
              adjustment = as.integer(adj_no),  # <‑‑ NUMERIC
-             term       = names(vf),
+             term       = rownames(vf),
              vif        = as.numeric(vf),
              row.names  = NULL,
              stringsAsFactors = FALSE)
