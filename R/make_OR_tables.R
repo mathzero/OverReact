@@ -3,7 +3,7 @@
 #' @import stats
 #' @import mgcv
 #' @import progress
-
+#' @import car
 
 #' @param dat data to be modelled
 #' @param dfRes data to be modelled
@@ -13,160 +13,47 @@
 #' @param floornumber If data is continuous, what is the lowest 'real' value in the uncleaned data?
 #' @param dateFormat If data is date, what is the required output date format?
 
+# ─────────────────────────────────────────────────────────────
+# helper: tidy VIF table with *numeric* adjustment column
+# ─────────────────────────────────────────────────────────────
+#' Compute a tidy VIF table
+#'
+#' @param fit      A fitted glm/lm that car::vif() understands
+#' @param step_lbl Character label for readability ("Crude", "+age_group", …)
+#' @param adj_no   Integer: how many covariates have been added (0 = crude)
+#'
+#' @return data.frame with columns <model>, <adjustment>, <term>, <vif>
+get_vif_df <- function(fit, step_lbl, adj_no) {
 
-# Model maker function ----------------------------------------------------
+  tl <- attr(terms(fit), "term.labels")
 
-
-
-
-### Main function to create a sequentially adjusted model. Depends on makeORTable
-modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",simpleround =F,
-                                 outcome="res", ref_level =NULL,
-                                 joint_adjustment_vars = c("age_group_named","sex","region_named",
-                                                           "ethnic_new", "imd_quintile_cat")){
-
-  # determine outcome type
-  num_y=length(unique(pull(data,outcome)))
-  if(num_y==2){
-    # print("Assuming binomial model")
-    family="binomial"
-  }else if (num_y>2){
-    # print("Assuming gaussian model")
-    family="gaussian"
-  }else{
-    print("Less than two unique values of outcome variable are found. Aborting modelling")
-    break
+  ## single‑predictor models → VIF is identically 1
+  if (length(tl) < 2L) {
+    return(data.frame(model      = step_lbl,
+                      adjustment = as.integer(adj_no),
+                      term       = tl,
+                      vif        = 1,
+                      row.names  = NULL,
+                      stringsAsFactors = FALSE))
   }
 
+  vf <- car::vif(fit)
+  if (is.matrix(vf)) vf <- diag(vf)     # factors → matrix
 
-  classes <- lapply(data[,c(variable_name,joint_adjustment_vars)], class) %>% unlist()
-
-  if("character" %in% classes){
-    print("These variables are character class. Consider converting to factor:")
-    print(c(variable_name,joint_adjustment_vars)[classes == "character"])
-
-  }
-  ### models will fail if insufficient data to work with, so putting this in as a quick failsafe.
-  ### With world enough and time, much better to replace with a trycatch
-
-  # check that we don't have an insufficient amount of data for the number of categories
-  # numvals <- length(unique(pull(data,variable_name)))
-  # nobs <- sum(!is.na(pull(data,variable_name)))
-  #
-  # if(class(data[,variable_name]) %in% c("factor","character") & nobs<=numvals+30 ){
-  #   print("May not be enough data to run this model")
-  # }else{
-
-    ### create univariate model
-    f <- as.formula(paste(outcome," ~",variable_name))
-    univ.mod.glm <- try(glm(f,  data = data,
-                        family = family),silent = T)
-    if(is(univ.mod.glm,"try-error")){
-      tab_univ <-     data.frame(Level=NA, OR=NA, Lower=NA,
-                                 Upper=NA, P_value=NA)
-
-    }else{
-
-    ### Create OR table
-    tab_univ <- makeORTable(univ.mod.glm, ref_level=ref_level)
-
-    ### Add model name
-    tab_univ$model <- "Crude"
-    tab_univ$Level <- stringr::str_remove(tab_univ$Level,variable_name)
-
-
-    }
-    # create empty lists for results
-    mod.results.list <- list()
-    mod.results.list.forplot <- list()
-
-
-    for (i in 1:length(joint_adjustment_vars)){
-
-
-      # print(paste0("Now processing additional covariate:", joint_adjustment_vars[i]))
-
-      ### adjusted for age and gender
-      f <- as.formula(paste(outcome," ~", paste(unique(c(variable_name,joint_adjustment_vars[1:i])),
-                                                collapse = "+")))
-      # run model
-      mod <- univ.mod.glm <- try(glm(f,  data = data,
-                                 family = family),silent = T)
-
-      if(is(univ.mod.glm,"try-error")){
-        tab <-     data.frame(Level=NA, OR=NA, Lower=NA,
-                                   Upper=NA, P_value=NA,
-                              model=paste0("+", joint_adjustment_vars[[i]]))
-        # save for plot
-        mod.results.list.forplot[[i]] <- tab
-
-        ### Add to list
-        mod.results.list[[i]] <- tab
-      }else{
-
-      ### Create OR table
-      tab <- makeORTable(mod, ref_level=ref_level)
-
-      ### Add model name
-      tab$model <- paste0("+", joint_adjustment_vars[[i]])
-
-
-      ### Select only the rows that refer to the variable of interest (for plotting)
-      sel_indx=grepl(pattern = variable_name,x = tab$Level,ignore.case = T)
-      sel_indx[[1]] <- TRUE # we always want the first one
-
-      # remove variable name
-      tab$Level <- stringr::str_remove(tab$Level,variable_name)
-
-
-      # save for plot
-      mod.results.list.forplot[[i]] <- tab[sel_indx,]
-
-      ### Add to list
-      mod.results.list[[i]] <- tab[sel_indx,]
-      }
-    }
-
-    ### Now we add all the models together into one big DF
-    df.output=data.frame(Level=mod.results.list[[1]]$Level)
-    df.output$crude_mod_OR <- c(paste0(specifyDecimal(x = tab_univ$OR, k = sf,format = format,simpleround =simpleround),
-                                       " (",
-                                       specifyDecimal(tab_univ$Lower,  k = sf,format = format,simpleround =simpleround),
-                                       ",",
-                                       specifyDecimal(tab_univ$Upper,  k = sf,format = format,simpleround =simpleround),
-                                       ")"),
-                                rep(NA_character_, nrow(df.output)- nrow(tab_univ)))
-
-    names(mod.results.list.forplot)  <- joint_adjustment_vars
-    mod.results.list.forplot$crude <- tab_univ
-
-
-    for (i in 1:length(joint_adjustment_vars)){
-      # print(i)
-      mod.results.list[[i]]$OR_concat <- c(paste0(specifyDecimal(mod.results.list[[i]]$OR,  k = sf,format = format,simpleround =simpleround),
-                                                  " (",
-                                                  specifyDecimal(mod.results.list[[i]]$Lower, k = sf,format = format,simpleround =simpleround),
-                                                  ",",
-                                                  specifyDecimal(mod.results.list[[i]]$Upper,  k = sf,format = format,simpleround =simpleround),
-                                                  ")"))
-
-      df.output <- plyr::join(df.output, mod.results.list[[i]] %>% dplyr::select(Level, OR_concat),
-                              by="Level", type = "left", match = "first")
-      names(df.output)[i+2]=paste0("plus_", joint_adjustment_vars[[i]])
-
-    }
-
-  # }
-  df.output.abbrev <- df.output
-
-  return(list(model_df=df.output,
-              model_df_predictorORs_only = df.output.abbrev,
-              crude_model_output=tab_univ,
-              adj_model_outputs=mod.results.list.forplot))
+  data.frame(model      = step_lbl,
+             adjustment = as.integer(adj_no),  # <‑‑ NUMERIC
+             term       = names(vf),
+             vif        = as.numeric(vf),
+             row.names  = NULL,
+             stringsAsFactors = FALSE)
 }
 
 
-# 1.  Helper that decides how to spell each variable in the output ----
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helper that decides how to spell each variable in the output ----
+# ──────────────────────────────────────────────────────────────────────────────
 
 get_pretty_name <- function(var, dat,
                             name_fun = NULL,           # <- optional user function
@@ -191,6 +78,120 @@ get_pretty_name <- function(var, dat,
 
   var
 }
+
+
+# Model maker function ----------------------------------------------------
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SEQUENTIAL MODELLER (now returns an out_vif element)
+# ──────────────────────────────────────────────────────────────────────────────
+
+modelMakerSequential <- function(variable_name, data = dfRes, sf = 2,
+                                 format = "f", simpleround = FALSE,
+                                 outcome = "res", ref_level = NULL,
+                                 joint_adjustment_vars =
+                                   c("age_group_named","sex","region_named",
+                                     "ethnic_new","imd_quintile_cat")) {
+
+  num_y <- length(unique(dplyr::pull(data, outcome)))
+  family <- if (num_y == 2L) "binomial" else "gaussian"
+
+  #──── 1. crude model ────#
+  f0              <- as.formula(paste(outcome, "~", variable_name))
+  crude_mod       <- try(glm(f0, data = data, family = family), silent = TRUE)
+
+  if (inherits(crude_mod, "try-error")) {
+    tab_univ      <- data.frame(Level = NA, OR = NA, Lower = NA,
+                                Upper = NA, P_value = NA)
+    vif_crude_df  <- data.frame(model = "Crude", term = NA, vif = NA)
+  } else {
+    tab_univ      <- makeORTable(crude_mod, ref_level = ref_level)
+    vif_crude_df <- get_vif_df(crude_mod, "Crude", 1)
+  }
+  tab_univ$model  <- "Crude"
+  tab_univ$Level  <- stringr::str_remove(tab_univ$Level, variable_name)
+
+  # objects to collect VIFs and OR tables for each step
+  vif_list            <- list(vif_crude_df)
+  mod.results.list    <- list()
+  mod.results.forplot <- list()
+
+  #──── 2. sequentially add covariates ────#
+  for (i in seq_along(joint_adjustment_vars)) {
+
+    step_vars <- paste(unique(c(variable_name, joint_adjustment_vars[1:i])),
+                       collapse = " + ")
+    f_step    <- as.formula(paste(outcome, "~", step_vars))
+
+    fit <- try(glm(f_step, data = data, family = family), silent = TRUE)
+    label <- paste0("+", joint_adjustment_vars[i])
+
+    if (inherits(fit, "try-error")) {
+      tab <- data.frame(Level = NA, OR = NA, Lower = NA,
+                        Upper = NA, P_value = NA, model = label)
+      vif_step_df <- data.frame(model = label, term = NA, vif = NA)
+    } else {
+      tab <- makeORTable(fit, ref_level = ref_level)
+      tab$model <- label
+      vif_step_df  <- get_vif_df(fit, label, i+1)
+    }
+
+    # save VIF & OR outputs
+    vif_list[[i + 1]] <- vif_step_df
+
+    sel_indx <- grepl(variable_name, tab$Level, ignore.case = TRUE)
+    sel_indx[1] <- TRUE
+    tab$Level <- stringr::str_remove(tab$Level, variable_name)
+
+    mod.results.forplot[[i]] <- tab[sel_indx, ]
+    mod.results.list[[i]]    <- tab[sel_indx, ]
+  }
+
+  #──── 3. assemble the OR summary frame exactly as before ────#
+  df.output <- data.frame(Level = mod.results.list[[1]]$Level)
+
+  df.output$crude_mod_OR <- c(
+    paste0(
+      specifyDecimal(tab_univ$OR,     k = sf, format = format, simpleround),
+      " (",
+      specifyDecimal(tab_univ$Lower,  k = sf, format = format, simpleround),
+      ",",
+      specifyDecimal(tab_univ$Upper,  k = sf, format = format, simpleround),
+      ")"
+    ),
+    rep(NA_character_, nrow(df.output) - nrow(tab_univ))
+  )
+
+  names(mod.results.forplot) <- joint_adjustment_vars
+  mod.results.forplot$crude  <- tab_univ
+
+  for (i in seq_along(joint_adjustment_vars)) {
+    mod.results.list[[i]]$OR_concat <- paste0(
+      specifyDecimal(mod.results.list[[i]]$OR,    k = sf, format = format, simpleround),
+      " (",
+      specifyDecimal(mod.results.list[[i]]$Lower, k = sf, format = format, simpleround),
+      ",",
+      specifyDecimal(mod.results.list[[i]]$Upper, k = sf, format = format, simpleround),
+      ")"
+    )
+    df.output <- plyr::join(df.output,
+                            mod.results.list[[i]][, c("Level", "OR_concat")],
+                            by = "Level", type = "left", match = "first")
+    names(df.output)[i + 2] <- paste0("plus_", joint_adjustment_vars[i])
+  }
+
+  out_vif <- do.call(rbind, vif_list)
+
+  list(model_df                   = df.output,
+       model_df_predictorORs_only = df.output,
+       crude_model_output         = tab_univ,
+       adj_model_outputs          = mod.results.forplot,
+       out_vif                    = out_vif)   # <‑‑ NEW ELEMENT
+}
+
+
 
 
 ##  Imports – add these to your R/zzz.R or NAMESPACE (roxygen style)
@@ -223,24 +224,26 @@ get_pretty_name <- function(var, dat,
 #'     \item{\code{plot_output}}{A tidy data.frame of raw OR/Beta + CI columns suitable for forest plots.}
 #'   }
 #' @export
-#'
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BATCH WRAPPER (ModelMakerMulti) – pulls VIFs through to the top level
+# ──────────────────────────────────────────────────────────────────────────────
 ModelMakerMulti <- function(dat                         = dfRes,
                             list_of_variables_of_interest,
                             outcome                     = "res",
                             sf                          = 2,
                             format                      = "f",
                             simpleround                 = FALSE,
-                            joint_adjustment_vars       = c("age_group_named","sex",
-                                                            "region_named","ethnic_new",
-                                                            "imd_quintile_cat"),
+                            joint_adjustment_vars       =
+                              c("age_group_named","sex","region_named",
+                                "ethnic_new","imd_quintile_cat"),
                             cov_name_list               = NULL,
-                            name_fun          = NULL,  # <- new
-                            auto_pretty       = TRUE,  # <- new
+                            name_fun                    = NULL,
+                            auto_pretty                 = TRUE,
                             remove_intercept_from_results = TRUE,
                             ncores                      = NULL) {
 
-  ## 0.  Setup – outcome family & helper used inside each worker --------------
-  num_y <- length(unique(dplyr::pull(dat, outcome)))
+  num_y  <- length(unique(dplyr::pull(dat, outcome)))
   family <- if (num_y == 2L) "binomial" else "gaussian"
   if (family == "binomial") {
     message("Assuming binomial outcome (logit GLM).")
@@ -248,104 +251,90 @@ ModelMakerMulti <- function(dat                         = dfRes,
     message("Assuming gaussian outcome (identity GLM).")
   }
 
-  #— Inner modelling routine; runs for a single predictor ----------------------
+  # inner runner now also returns VIFs
   single_var_runner <- function(pred_name) {
 
-    ## Reference level: first factor level, coerced explicitly to preserve order
     reflev <- levels(dplyr::pull(dat, !!pred_name))[1]
 
-    ## Call the existing sequential modeller
-    mod <- modelMakerSequential(variable_name       = pred_name,
-                                data                = dat,
-                                outcome             = outcome,
-                                sf                  = sf,
-                                format              = format,
-                                ref_level           = reflev,
+    mod <- modelMakerSequential(variable_name        = pred_name,
+                                data                 = dat,
+                                outcome              = outcome,
+                                sf                   = sf,
+                                format               = format,
+                                ref_level            = reflev,
                                 joint_adjustment_vars = joint_adjustment_vars)
 
-    #  Tidy up names for downstream binding
     names(mod$adj_model_outputs) <- joint_adjustment_vars
     mod$adj_model_outputs        <- mod$adj_model_outputs[
       c(length(mod$adj_model_outputs),
-        1:(length(mod$adj_model_outputs) - 1))]
+        seq_len(length(mod$adj_model_outputs) - 1))
+    ]
 
     list(
-      tidy_res   = mod$model_df_predictorORs_only,
-      tidy_plot  = dplyr::bind_rows(mod$adj_model_outputs, .id = "adjustment")
+      tidy_res  = mod$model_df_predictorORs_only,
+      tidy_plot = dplyr::bind_rows(mod$adj_model_outputs, .id = "adjustment"),
+      vif_df    = mod$out_vif
     )
   }
 
-
-
-  ## 1.  Run either sequentially or in parallel --------------------------------
-
+  # run either sequentially or in parallel exactly as before
   if (is.null(ncores) || ncores < 2L) {
-    #‑‑ Sequential -------------------------------------------------------------
     message("Running sequentially …")
     results <- lapply(list_of_variables_of_interest, single_var_runner)
-
   } else {
-    #‑‑ Parallel via PSOCK/fork cluster ----------------------------------------
     message(sprintf("Running in parallel on %d cores …", ncores))
-
-    cl <- parallel::makeCluster(ncores)           # fork on Unix, PSOCK on Windows
+    cl <- parallel::makeCluster(ncores)
     on.exit(parallel::stopCluster(cl), add = TRUE)
-
-    ## Export needed objects & packages to workers
     parallel::clusterExport(
       cl,
       varlist = c("dat","outcome","sf","format","simpleround",
                   "joint_adjustment_vars","modelMakerSequential",
-                  "specifyDecimal","makeORTable"),
+                  "specifyDecimal","makeORTable","get_vif_df"),
       envir = environment()
     )
     parallel::clusterEvalQ(cl, {
-      library(dplyr); library(stats); library(mgcv); library(stringr); library(plyr)
+      library(dplyr); library(stats); library(mgcv); library(stringr);
+      library(plyr);  library(car)
     })
-
     results <- parallel::parLapply(cl,
-                                   X   = list_of_variables_of_interest,
-                                   fun = single_var_runner)
+                                   list_of_variables_of_interest,
+                                   single_var_runner)
   }
-
-
-  ## --------------------------------------------------------------------------
-  ## 2.  Assemble & label ------------------------------------------------------
-  ## --------------------------------------------------------------------------
 
   pretty_names <- vapply(list_of_variables_of_interest,
                          get_pretty_name,
                          FUN.VALUE = character(1),
-                         dat       = dat,
-                         name_fun  = name_fun,
+                         dat        = dat,
+                         name_fun   = name_fun,
                          auto_pretty = auto_pretty)
 
   names(results) <- pretty_names
 
-  res_list       <- lapply(results, `[[`, "tidy_res")
-  plot_res_list  <- lapply(results, `[[`, "tidy_plot")
+  out_df        <- dplyr::bind_rows(lapply(results, `[[`, "tidy_res"),
+                                    .id = "Variable")
+  out_plot      <- dplyr::bind_rows(lapply(results, `[[`, "tidy_plot"),
+                                    .id = "Variable")
+  out_vif       <- dplyr::bind_rows(lapply(results, `[[`, "vif_df"),
+                                    .id = "Variable")
 
-
-  out_df   <- dplyr::bind_rows(res_list,  .id = "Variable")
-  out_plot <- dplyr::bind_rows(plot_res_list, .id = "Variable")
-
-  ## Rename & clean up ---------------------------------------------------------
-  out_df   <- dplyr::rename(out_df,   Category = Level)
+  out_df  <- dplyr::rename(out_df,  Category = Level)
   out_plot <- dplyr::rename(out_plot, Category = Level)
 
   if (family == "gaussian") {
     out_plot <- dplyr::rename(out_plot, Beta = OR)
-    out_df   <- dplyr::rename(out_df,   crude_mod_Beta = crude_mod_OR)
+    out_df   <- dplyr::rename(out_df,  crude_mod_Beta = crude_mod_OR)
   }
 
   if (remove_intercept_from_results) {
-    out_df   <- dplyr::filter(out_df,   !grepl("Intercept", Category))
+    out_df  <- dplyr::filter(out_df,  !grepl("Intercept", Category))
     out_plot <- dplyr::filter(out_plot, !grepl("Intercept", Category))
+    out_vif  <- dplyr::filter(out_vif,  term != "(Intercept)")
   }
 
   list(
     df_output   = out_df,
-    plot_output = out_plot
+    plot_output = out_plot,
+    vif_output  = out_vif            # <‑‑ NEW OUTPUT
   )
 }
 
