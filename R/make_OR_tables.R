@@ -38,11 +38,12 @@ get_vif_df <- function(fit, step_lbl, adj_no) {
   }
 
   vf <- car::vif(fit)
+  term <-  rownames(vf)
   if (is.matrix(vf)) vf <- diag(vf)     # factors → matrix
 
   data.frame(model      = step_lbl,
              adjustment = as.integer(adj_no),  # <‑‑ NUMERIC
-             term       = rownames(vf),
+             term       = term,
              vif        = as.numeric(vf),
              row.names  = NULL,
              stringsAsFactors = FALSE)

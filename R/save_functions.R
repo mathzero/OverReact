@@ -103,6 +103,11 @@ savePrettyExcelWorkbook <- function(listOfTables=NULL, workbookName = "myworkboo
     tab = listOfTables[[i]]
     tabName = names(listOfTables)[[i]]
 
+    # shorten tab name if required (errors over 30)
+    if(stringr::str_length(tabName)>30){
+      tabName <- stringr::str_sub(tabName,start = 1,end = 30)
+    }
+
     # define columns for rounding and whole numbers
     wholeNumberColumns = which(colnames(tab) %in% c("Positive", "Total", noDecimalsColumns))
     decimalNumberColumns = which(colnames(tab) %in% c("Prevalence", "Lower", "Upper"))
