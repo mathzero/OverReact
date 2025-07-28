@@ -12,39 +12,77 @@
 #' @param posval If data is binary, what is the positive value in the uncleaned data?
 #' @param floornumber If data is continuous, what is the lowest 'real' value in the uncleaned data?
 #' @param dateFormat If data is date, what is the required output date format?
-
-# ─────────────────────────────────────────────────────────────
-# helper: tidy VIF table with *numeric* adjustment column
-# ─────────────────────────────────────────────────────────────
-#' Compute a tidy VIF table
+# --------------------------------------------------------------------------
+# helper: tidy VIF table that survives rank‑deficient models
+# --------------------------------------------------------------------------
+#' Compute tidy VIFs for a model
 #'
-#' @param fit      A fitted glm/lm that car::vif() understands
-#' @param step_lbl Character label for readability ("Crude", "+age_group", …)
-#' @param adj_no   Integer: how many covariates have been added (0 = crude)
+#' @param fit      A fitted lm()/glm() object
+#' @param step_lbl Character label for the model step ("Crude", "+age", …)
+#' @param adj_no   Integer: number of covariates added so far (0 = crude)
 #'
-#' @return data.frame with columns <model>, <adjustment>, <term>, <vif>
+#' @return data.frame <model, adjustment, term, vif>
 get_vif_df <- function(fit, step_lbl, adj_no) {
 
-  tl <- attr(terms(fit), "term.labels")
+  terms_in_model <- attr(terms(fit), "term.labels")
 
-  ## single‑predictor models → VIF is identically 1
-  if (length(tl) < 2L) {
-    return(data.frame(model      = step_lbl,
-                      adjustment = as.integer(adj_no),
-                      term       = tl,
-                      vif        = 1,
-                      row.names  = NULL,
-                      stringsAsFactors = FALSE))
+  ## -------------------------------------------------
+  ## 1. one‑predictor case → VIF is 1 by definition
+  ## -------------------------------------------------
+  if (length(terms_in_model) < 2L) {
+    vif_vec <- setNames(rep(1, length(terms_in_model)), terms_in_model)
+
+  } else {
+
+    ## -------------------------------------------------
+    ## 2. multi‑predictor case
+    ##    try car::vif(); if aliased, fall back
+    ## -------------------------------------------------
+    vif_vec <- tryCatch({
+
+      v <- car::vif(fit)                          # may error if aliased
+      if (is.matrix(v)) v <- v[, ncol(v)]         # GVIF^(1/(2*Df))
+      v                                            # named numeric vector
+
+    }, error = function(e) {
+
+      if (grepl("aliased coefficients", e$message, fixed = TRUE)) {
+
+        ## --- fallback: manual VIF on full‑rank subset ----
+        X <- model.matrix(fit)
+        X <- X[, colnames(X) != "(Intercept)", drop = FALSE]
+
+        keep <- qr(X)$pivot[seq_len(qr(X)$rank)]   # columns giving full rank
+        X_r  <- X[, keep, drop = FALSE]
+
+        vif_manual <- sapply(seq_len(ncol(X_r)), function(j) {
+          other <- X_r[, -j, drop = FALSE]
+          if (ncol(other) == 0) return(1)
+          r2 <- summary(lm(X_r[, j] ~ other))$r.squared
+          1 / (1 - r2)
+        })
+        names(vif_manual) <- colnames(X_r)
+
+        # aliased terms → NA
+        if (ncol(X_r) < ncol(X)) {
+          aliased <- setdiff(colnames(X), colnames(X_r))
+          vif_manual <- c(vif_manual,
+                          setNames(rep(NA_real_, length(aliased)), aliased))
+        }
+        vif_manual
+
+      } else {
+
+        ## any other unexpected error → NA for all terms
+        setNames(rep(NA_real_, length(terms_in_model)), terms_in_model)
+      }
+    })
   }
 
-  vf <- car::vif(fit)
-  term <-  rownames(vf)
-  if (is.matrix(vf)) vf <- diag(vf)     # factors → matrix
-
   data.frame(model      = step_lbl,
-             adjustment = as.integer(adj_no),  # <‑‑ NUMERIC
-             term       = term,
-             vif        = as.numeric(vf),
+             adjustment = as.integer(adj_no),
+             term       = names(vif_vec),
+             vif        = as.numeric(vif_vec),
              row.names  = NULL,
              stringsAsFactors = FALSE)
 }
