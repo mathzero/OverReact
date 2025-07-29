@@ -82,6 +82,9 @@ mymods$plot_output
 mymods$df_output
 vif=mymods$vif_output
 
+
+
+
 vif |>
   filter(adjustment==max(adjustment)) |>
   ggplot(aes(y=term, x=vif))+
