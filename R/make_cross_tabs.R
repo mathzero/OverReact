@@ -12,7 +12,7 @@
 #' @param include_percentages Logical - include %s
 
 #' @param rowwise_precentages Logical - calculate %s rowwise (TRUE) or columnwise (FALSE)
-#' @param rowvar_list Supply a list of variables for the rows of a multi-variable cross-tab
+#' @param rowvars Supply a list of variables for the rows of a multi-variable cross-tab
 #' @param cov_names List of more descriptive names for the row variables in a cross-tab. Supply a list of the format eg list(varname="More descriptive variable name")
 #' @param mystring String, or vector of strings, to be amended
 #' @param lookbehind The text leading up to the start of the string to be extracted
@@ -43,11 +43,11 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
   }
   else{
     tab <- (round(questionr::wtd.table(x=pull(dat,rowvar),
-                           y= pull(dat,colvar),
-                           weights = pull(dat, weights),
-                           normwt = F,
-                           na.rm = T,
-                           na.show = F),0))
+                                       y= pull(dat,colvar),
+                                       weights = pull(dat, weights),
+                                       normwt = F,
+                                       na.rm = T,
+                                       na.show = F),0))
   }
 
   # statstical test
@@ -116,41 +116,77 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
 
 
 # Function to do x-tab for contiuous variables
-crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL, weights = NULL,
+crossTabContinuous <- function(dat = dfRes, rowvar, colvar=NULL, weights = NULL,
+                               summary_stat="mean",
                                statistical_test=F){
-  if(!is.null(weights)){
-    means <- sapply(split(dat,as.factor(pull(dat,colvar))), function(x) stats::weighted.mean(pull(x, rowvar),pull(x, weights), na.rm=T)) %>%
-      as.table()%>% as.data.frame()
-    sds <- plyr::ddply(dat,colvar, function(x) Hmisc::wtd.var(pull(x, rowvar),pull(x, weights))) %>% as.data.frame()
-    means$Freq <- round(means$Freq,2)
-    # root variance to get sd
-    colnames(sds) <- colnames(means)
-    sds$Freq <- round(sqrt(as.numeric(sds$Freq)),2)
+
+  if(is.null(colvar)){
+    colvar="dummy"
+    dat$dummy="Dummy"
+  }
+
+  if(tolower(summary_stat)=="mean"){
+    if(!is.null(weights)){
+      means <- sapply(split(dat,as.factor(pull(dat,colvar))), function(x) stats::weighted.mean(pull(x, rowvar),pull(x, weights), na.rm=T)) %>%
+        as.table()%>% as.data.frame()
+      sds <- plyr::ddply(dat,colvar, function(x) Hmisc::wtd.var(pull(x, rowvar),pull(x, weights))) %>% as.data.frame()
+      means$Freq <- round(means$Freq,2)
+      # root variance to get sd
+      colnames(sds) <- colnames(means)
+      sds$Freq <- round(sqrt(as.numeric(sds$Freq)),2)
     }
-  else{
-    means <- (round(by(pull(dat, rowvar),pull(dat, colvar), mean, na.rm=T),2)) %>% as.table()%>% as.data.frame()
-    sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), sd, na.rm=T),2))%>% as.table()%>% as.data.frame()
+    else{
+      means <- (round(by(pull(dat, rowvar),pull(dat, colvar), mean, na.rm=T),2)) %>% as.table()%>% as.data.frame()
+      sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), sd, na.rm=T),2))%>% as.table()%>% as.data.frame()
+    }
+    names(means) <- c("Category", "mean")
+    names(sds) <- c("Category","sd")
+    statname="Mean (SD)"
+
+
+    uniques <- unique(pull(dat, colvar))[!is.na(unique(pull(dat, colvar)))] %>% as.character()
+    tab <- data.frame(matrix(nrow = 1, ncol=1+length(uniques),dimnames = list(NULL,c("Category", uniques))))
+    names(tab)[c(2:ncol(tab))] <- uniques
+    tab$Category <- statname
+    for (x in 1:length(uniques)){
+      tab[1,colnames(tab)==uniques[[x]]] <- paste0(means[means$Category == uniques[[x]],]$mean,
+                                                   " (",
+                                                   sds[sds$Category == uniques[[x]],]$sd,")")
+
+    }
+    tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
+
+  }else if(tolower(summary_stat)=="median"){
+    means <- (round(by(pull(dat, rowvar),pull(dat, colvar), median, na.rm=T),2)) %>% as.table()%>% as.data.frame()
+    sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), IQR, na.rm=T),2))%>% as.table()%>% as.data.frame()
+    names(means) <- c("Category", "median")
+    names(sds) <- c("Category","IQR")
+    statname="Median (IQR)"
+
+    uniques <- unique(pull(dat, colvar))[!is.na(unique(pull(dat, colvar)))] %>% as.character()
+    tab <- data.frame(matrix(nrow = 1, ncol=1+length(uniques),dimnames = list(NULL,c("Category", uniques))))
+    names(tab)[c(2:ncol(tab))] <- uniques
+    tab$Category <- statname
+    for (x in 1:length(uniques)){
+      tab[1,colnames(tab)==uniques[[x]]] <- paste0(means[means$Category == uniques[[x]],]$median,
+                                                   " (",
+                                                   sds[sds$Category == uniques[[x]],]$IQR,")")
+
+    }
+    tab$Sum = paste0(round(median(pull(dat, rowvar), na.rm=T),2), " (",round(IQR(pull(dat, rowvar), na.rm=T),2),")")
+  }else{
+    print("summary_stat not valid. Please choose from 'mean' or 'median'")
+    break
   }
 
-  names(means) <- c("Category", "mean")
-  names(sds) <- c("Category","sd")
-  uniques <- unique(pull(dat, colvar))[!is.na(unique(pull(dat, colvar)))] %>% as.character()
-  tab <- data.frame(matrix(nrow = 1, ncol=1+length(uniques),dimnames = list(NULL,c("Category", uniques))))
-  names(tab)[c(2:ncol(tab))] <- uniques
-  tab$Category <- "Mean (SD)"
-  for (x in 1:length(uniques)){
-    tab[1,colnames(tab)==uniques[[x]]] <- paste0(means[means$Category == uniques[[x]],]$mean,
-                                                 " (",
-                                                 sds[sds$Category == uniques[[x]],]$sd,")")
 
-  }
-  tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
+
 
   if(statistical_test){
     mod=lm(formula = as.formula(paste0(rowvar," ~ ",colvar)), data = dat)
     modanova=anova(mod)
     pval=modanova$`Pr(>F)`
-    tab$pval=pval
+    tab$pval=pval[[1]]
   }
   # tab$Variable = rowva
   return(tab)
@@ -158,19 +194,38 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar, colvar_levels = NULL
 
 
 ### Generalise the xtab function to do multiple covariates at once
-crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, confint=T,
+crossTabMulti <- function(dat, rowvars, colvar=NULL, cov_names=NULL, confint=T,
                           include_percentages = T,
-                          rowwise_precentages = T, weights = NULL,
-                          comma_thousands = F, statistical_test = F){
+                          rowwise_precentages = T, weights = NULL,summary_stat="mean",
+                          comma_thousands = F, statistical_test = F,
+                          rowvar_list){
+
+  if(!summary_stat %in% c("mean","median")){
+    print("Please choose 'mean' or 'median' for summary_stat")
+  }
+
+  if (!missing("rowvar_list")){
+    warning("Argument deprecated, use rowvars instead.
+              The parameter rowvar_list is set equal the parameter old_arg.")
+    rowvars <- rowvar_list
+  }
+
+  if(is.null(colvar)){
+    colvar="dummy"
+    dat$dummy="All data"
+  }
+
+
   res_list <- list()
-  for (i in 1:length(rowvar_list)){
-    print(paste0("Processing ",rowvar_list[[i]]))
-    if(class(pull(dat, rowvar_list[[i]])) %in% c("integer", "numeric") &
-       !all(names(table(pull(dat, rowvar_list[[i]]))) %in% c("0", "1"))){
-      res <- crossTabContinuous(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar)
+  for (i in 1:length(rowvars)){
+    print(paste0("Processing ",rowvars[[i]]))
+    if(class(pull(dat, rowvars[[i]])) %in% c("integer", "numeric") &
+       !all(names(table(pull(dat, rowvars[[i]]))) %in% c("0", "1"))){
+      res <- crossTabContinuous(dat = dat,rowvar = rowvars[[i]], colvar = colvar,summary_stat=summary_stat,
+                                statistical_test=statistical_test)
 
     }else{
-      res <- crossTab(dat = dat,rowvar = rowvar_list[[i]], colvar = colvar,confint = confint,
+      res <- crossTab(dat = dat,rowvar = rowvars[[i]], colvar = colvar,confint = confint,
                       include_percentages=include_percentages,
                       rowwise_precentages = rowwise_precentages,
                       weights=weights, comma_thousands = comma_thousands,
@@ -182,12 +237,12 @@ crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, conf
     res_list[[i]] <- res
   }
   if(!is.null(cov_names)){
-    names(res_list) <- cov_names[rowvar_list]
+    names(res_list) <- cov_names[rowvars]
   }else{
-    names(res_list) <- cov_names
+    names(res_list) <- rowvars
   }
   out <- dplyr::bind_rows(res_list, .id = "Variable") %>% filter(Category != "Sum") %>%
-    dplyr::rename(`Sum / mean(SD)`=Sum)
+    dplyr::rename(Pooled=Sum)
 
   return(out)
 }
@@ -199,9 +254,9 @@ crossTabMulti <- function(dat = dfRes, rowvar_list, colvar, cov_names=NULL, conf
 
 # define dirty function to get numbers out of xtabs
 xtabPercentageExtractor <- function(mystring="teststrng",
-                                      lookbehind = "\\(",
-                                      lookahead= "\\%)",
-                                      return_numeric=T){
+                                    lookbehind = "\\(",
+                                    lookahead= "\\%)",
+                                    return_numeric=T){
   full_lookbehind=paste0(".*",lookbehind)
   full_lookahead=paste0(lookahead,".*")
   x=gsub(full_lookbehind, "",mystring)
@@ -227,5 +282,4 @@ makeXtabPlottable <- function(myxtab,
   }
   return(myxtab)
 }
-
 

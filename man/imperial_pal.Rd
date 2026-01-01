@@ -2,18 +2,15 @@
 % Please edit documentation in R/imperial_colour_scheme_functions.R
 \name{imperial_pal}
 \alias{imperial_pal}
-\title{Return function to interpolate an Imperial color palette}
+\title{Return function to interpolate a new color palette}
 \usage{
 imperial_pal(palette = "default", reverse = FALSE, ...)
 }
 \arguments{
 \item{palette}{Character name of palette in imperial_palettes. Choose from:
 \itemize{
- \item default, core, cool, warm, extended,
- \item pink, green, red, blue,
- \item tbp, vbn, obib, bnt,
- \item bgrey_grad, bgrn_grad
- \item two_col_grey_blue, two_col_grey_pool, two_col_blue_navy, two_col_grey_orng
+ \item default, earth, cool, warm, soft, bold, nature,
+ \item two_col_grey_teal, two_col_pink_purple, two_col_blue_green
 }}
 
 \item{reverse}{Boolean indicating whether the palette should be reversed}
@@ -21,5 +18,5 @@ imperial_pal(palette = "default", reverse = FALSE, ...)
 \item{...}{Additional arguments to pass to colorRampPalette()}
 }
 \description{
-Return function to interpolate an Imperial color palette
+Return function to interpolate a new color palette
 }

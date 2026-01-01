@@ -12,9 +12,9 @@
 #' @import sysfonts
 
 
-theme_react <- function(base_family = "IBM Plex Sans",
+theme_react <- function(base_family = "sans",
                         base_size = 11,
-                        strip_text_size = 10,
+                        strip_text_size = 9,
                         strip_text_margin = 5,
                         subtitle_size = 12,
                         subtitle_margin = 7,
@@ -22,15 +22,15 @@ theme_react <- function(base_family = "IBM Plex Sans",
                         plot_title_margin = 7,
                         ...){
 
-
-  # check if selected font is in loaded fonts
-  if(!base_family %in% as.data.frame(sysfonts::font_files())$family){
-    print(paste0(base_family," is not loaded as a system font. Replacing with sans for now"))
-    base_family <- "sans"
-    semibold_family=base_family
-  }else{
-    semibold_family="IBM Plex Sans SemiBold"
-  }
+#
+#   # check if selected font is in loaded fonts
+#   if(!base_family %in% as.data.frame(sysfonts::font_files())$family){
+#     print(paste0(base_family," is not loaded as a system font. Replacing with sans for now"))
+#     base_family <- "sans"
+#     semibold_family=base_family
+#   }else{
+#     semibold_family="IBM Plex Sans SemiBold"
+#   }
 
 
   theme_bw(base_size = 10, base_family = base_family,
@@ -38,13 +38,13 @@ theme_react <- function(base_family = "IBM Plex Sans",
            base_rect_size = 0.1) %+replace%
     theme(
       panel.background = element_blank(),
-      plot.background = element_rect(fill = "transparent", colour = NA),
+      plot.background = element_rect(fill = "white", colour = NA),
       legend.background = element_rect(fill = "transparent", colour = NA),
       legend.key =element_rect(fill = "transparent", colour = NA),
       strip.background = element_rect(fill = "white",size = 0.2),
       axis.text = element_text(size = 8),
       strip.text = element_text(face = "bold",size = strip_text_size,margin = ggplot2::margin(rep(2,4)),
-                                family=semibold_family),
+                                family=base_family),
 
       # # from Silge
       # strip.text = ggplot2::element_text(hjust = 0, size=strip_text_size,
@@ -53,9 +53,62 @@ theme_react <- function(base_family = "IBM Plex Sans",
       plot.subtitle = ggplot2::element_text(hjust = 0, size=subtitle_size,
                                                  margin=ggplot2::margin(b=subtitle_margin),
                                                  family=base_family),
-      plot.title = ggplot2::element_text(hjust = 0, size = plot_title_size,
+      plot.title = ggplot2::element_text(hjust = 0, size = plot_title_size,face = "bold",
                                               margin=ggplot2::margin(b=plot_title_margin),
-                                              family=semibold_family)
+                                              family=base_family)
+    )
+
+}
+
+
+theme_mw <- function(base_family = "sans",
+                        base_size = 11,
+                        strip_text_size = 9,
+                        strip_text_margin = 5,
+                        subtitle_size = 12,
+                        subtitle_margin = 7,
+                        plot_title_size = 14,
+                        plot_title_margin = 7,
+                     panel.grid.major = element_blank(),
+                     panel.grid.minor =  element_blank(),
+                     legend.position=c(1, 1),
+                     legend.justification = c(1, 1),
+                     legend.title = element_text(face = "bold"),
+                        ...){
+
+
+  theme_bw(base_size = 10, base_family = base_family,
+           base_line_size = 0.2,
+           base_rect_size = 0.1) %+replace%
+    theme(
+      panel.border = element_rect(colour = "black", fill=NA, linewidth=0.3),
+      axis.ticks = element_line(colour = "black",linewidth=0.3),
+      legend.background = element_blank(),
+      panel.background = element_blank(),
+      plot.background = element_rect(fill = "white", colour = NA),
+      legend.key =element_rect(fill = "transparent", colour = NA),
+      strip.background = element_rect(fill = "white",size = 0.2),
+      axis.text = element_text(size = 8),
+      strip.text = element_text(face = "bold",size = strip_text_size,margin = ggplot2::margin(rep(2,4)),
+                                family=base_family),
+
+      panel.grid.major = panel.grid.major,
+      panel.grid.minor =  panel.grid.minor,
+
+
+      # legend
+      legend.box.background = element_rect(colour = "black",linewidth=0.1),
+      legend.position =legend.position,
+      legend.justification = legend.justification,
+      legend.title=legend.title,
+
+     # subtitle and title settings
+      plot.subtitle = ggplot2::element_text(hjust = 0, size=subtitle_size,
+                                            margin=ggplot2::margin(b=subtitle_margin),
+                                            family=base_family, face="plain"),
+      plot.title = ggplot2::element_text(hjust = 0, size = plot_title_size,
+                                         margin=ggplot2::margin(b=plot_title_margin),
+                                         family=base_family,face="bold")
     )
 
 }

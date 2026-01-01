@@ -1,1 +1,10 @@
 exportPattern("^[[:alpha:]]+")
+ importFrom("grDevices", "cairo_pdf", "colorRampPalette")
+    importFrom("methods", "is")
+    importFrom("stats", "IQR", "addmargins", "anova", "as.formula",
+               "binomial", "chisq.test", "coef", "complete.cases",
+               "delete.response", "filter", "glm", "glm.control", "lm",
+               "median", "model.frame", "model.matrix", "na.omit",
+               "plogis", "pnorm", "qnorm", "quantile", "sd", "terms",
+               "vcov")
+    importFrom("utils", "write.csv")
