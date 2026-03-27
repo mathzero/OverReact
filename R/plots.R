@@ -245,6 +245,9 @@ plotReactVIF <- function(vif_df,
   if ("adjustment" %in% names(df)) std$adjustment <- df$adjustment
   if ("adjustment_label" %in% names(df)) std$adjustment_label <- as.character(df$adjustment_label)
   if ("model" %in% names(df)) std$model <- as.character(df$model)
+  if ("term_raw" %in% names(df)) std$term_raw <- as.character(df$term_raw)
+  if ("is_reference" %in% names(df)) std$is_reference <- as.logical(df$is_reference)
+  if ("is_intercept" %in% names(df)) std$is_intercept <- as.logical(df$is_intercept)
 
   std$.input_order <- seq_len(nrow(std))
   std <- .react_apply_adjustment_labels(std, adjustment_labels = adjustment_labels)
@@ -255,7 +258,11 @@ plotReactVIF <- function(vif_df,
   std$Category_display[blank_category] <- std$Variable[blank_category]
 
   if (!include_reference) {
-    std <- std[!grepl("\\[reference\\]$", std$Category_display), , drop = FALSE]
+    if ("is_reference" %in% names(std)) {
+      std <- std[!ifelse(is.na(std$is_reference), FALSE, std$is_reference), , drop = FALSE]
+    } else {
+      std <- std[!grepl("\\[reference\\]$", std$Category_display), , drop = FALSE]
+    }
   }
 
   if (!is.null(variables)) {
@@ -289,7 +296,11 @@ plotReactVIF <- function(vif_df,
     stop("The supplied model did not return any coefficients to plot.")
   }
 
-  coef_tab <- coef_tab[!grepl("Intercept", coef_tab$Level, ignore.case = TRUE), , drop = FALSE]
+  if ("is_intercept" %in% names(coef_tab)) {
+    coef_tab <- coef_tab[!coef_tab$is_intercept, , drop = FALSE]
+  } else {
+    coef_tab <- coef_tab[!grepl("Intercept", coef_tab$Level, ignore.case = TRUE), , drop = FALSE]
+  }
   if (!nrow(coef_tab)) {
     stop("The supplied model only returned intercept terms.")
   }
@@ -302,7 +313,8 @@ plotReactVIF <- function(vif_df,
   term_index <- rep(NA_integer_, nrow(coef_tab))
   if (!is.null(mm) && !is.null(term_labels)) {
     assign_index <- attr(mm, "assign")
-    col_index <- match(coef_tab$Level, colnames(mm))
+    term_values <- if ("term_raw" %in% names(coef_tab)) coef_tab$term_raw else coef_tab$Level
+    col_index <- match(term_values, colnames(mm))
     valid_cols <- !is.na(col_index)
     term_index[valid_cols] <- assign_index[col_index[valid_cols]]
   }
@@ -313,9 +325,10 @@ plotReactVIF <- function(vif_df,
   if (!is.null(term_labels) && length(term_labels)) {
     for (term_id in sort(unique(term_index[!is.na(term_index) & term_index > 0L]))) {
       term <- term_labels[[term_id]]
-      pretty_term <- .react_pretty_name(term, dat = model_frame, name_fun = name_fun, auto_pretty = auto_pretty)
+      term_name <- gsub("`", "", term, fixed = TRUE)
+      pretty_term <- .react_pretty_name(term_name, dat = model_frame, name_fun = name_fun, auto_pretty = auto_pretty)
 
-      if (!is.null(variables) && !term %in% variables && !pretty_term %in% variables) {
+      if (!is.null(variables) && !term_name %in% variables && !pretty_term %in% variables) {
         next
       }
 
@@ -328,25 +341,28 @@ plotReactVIF <- function(vif_df,
       tmp <- coef_tab[rows, , drop = FALSE]
       tmp$Variable <- pretty_term
 
-      if (!is.null(model_frame) && term %in% names(model_frame) && is.factor(model_frame[[term]])) {
+      if (!is.null(model_frame) && term_name %in% names(model_frame) && is.factor(model_frame[[term_name]])) {
         term_pattern <- paste0("^", gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", term))
         tmp$Category <- sub(term_pattern, "", tmp$Level)
 
         if (include_reference) {
-          ref_row <- data.frame(
-            Level = paste0(term, levels(model_frame[[term]])[1], " [reference]"),
-            OR = NA_real_,
-            Lower = NA_real_,
-            Upper = NA_real_,
-            P_value = NA_real_,
-            Variable = pretty_term,
-            Category = paste0(levels(model_frame[[term]])[1], " [reference]"),
-            stringsAsFactors = FALSE
-          )
-          tmp <- rbind(ref_row, tmp)
+          ref_level <- levels(model_frame[[term_name]])[1]
+          ref_row <- tmp[rep(1L, 1L), , drop = FALSE]
+          ref_row[1, ] <- NA
+          ref_row$Level <- paste0(term, ref_level, " [reference]")
+          ref_row$term_raw <- NA_character_
+          ref_row$OR <- NA_real_
+          ref_row$Lower <- NA_real_
+          ref_row$Upper <- NA_real_
+          ref_row$P_value <- NA_real_
+          ref_row$is_reference <- TRUE
+          ref_row$is_intercept <- FALSE
+          ref_row$Variable <- pretty_term
+          ref_row$Category <- paste0(ref_level, " [reference]")
+          tmp <- dplyr::bind_rows(ref_row, tmp)
         }
       } else if (nrow(tmp) == 1L) {
-        tmp$Category <- term
+        tmp$Category <- term_name
       } else {
         tmp$Category <- tmp$Level
       }

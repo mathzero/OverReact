@@ -68,19 +68,20 @@ library(tictoc)
 
 
 tic()
-mymods=ModelMakerMultiRD(dat = dat,
+mymods=ModelMakerMulti(dat = dat,
                          list_of_variables_of_interest = myvars,
                          outcome = "y_bin",
                          sf = 2,
-                         incremental = T,
-                         include_crude = T,
+                        #  incremental = T,
+                        #  include_crude = T,
                        simpleround = T,
                        remove_intercept_from_results = T,
                        ncores = 1,
                        auto_pretty = T,
-                       joint_adjustment_vars = myvars,
-                       include_rd = F,
-                       n_sim = 20)
+                       joint_adjustment_vars = myvars
+                      #  include_rd = F,
+                      #  n_sim = 20
+                      )
 toc()
 
 plot_output <- mymods$plot_output
@@ -96,7 +97,7 @@ forest_plot_mm <- plotReactForest(
   mymods,
   adjustment_numbers = c(0, 1, 3),
   adjustment_descriptions = c("Crude", "+ X1", "Full model"),
-  title = "Forest plot from ModelMakerMultiRD output"
+  title = "Forest plot from ModelMakerMulti() output"
 )
 print(forest_plot_mm)
 
@@ -194,5 +195,4 @@ toc()
 tic()
 makeRDTable(mod = testmod,variable_name = "cat",ref_level = "Case",dp = 10,data = dat,n_sim = 100)
 toc()
-
 

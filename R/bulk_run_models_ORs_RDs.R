@@ -94,86 +94,20 @@ check_perfect_separation <- function(data, outcome, predictor) {
 # 3. Odds-ratio / coefficient table builder -----------------------------------
 # =============================================================================
 makeORTable <- function(mod, ref_level = NULL, dp = 3) {
-  if (is.null(mod) || inherits(mod, "try-error")) {
-    return(data.frame(Level = NA_character_, OR = NA_real_, Lower = NA_real_,
-                      Upper = NA_real_, P_value = NA_real_,
-                      stringsAsFactors = FALSE))
-  }
-
-  # Check for convergence warnings
-  if (!is.null(mod$converged) && !mod$converged) {
-    warning("Model did not converge properly")
-  }
-
-  mod_exp <- identical(tryCatch(mod$family$family, error = function(e) NULL), "binomial")
-  if (inherits(mod, "gam")) {
-    tab <- tryCatch({
-      summ <- mgcv::summary.gam(mod)
-      as.data.frame(summ$p.table)
-    }, error = function(e) NULL)
-    if (is.null(tab)) {
-      return(data.frame(Level = NA_character_, OR = NA_real_, Lower = NA_real_,
-                        Upper = NA_real_, P_value = NA_real_,
-                        stringsAsFactors = FALSE))
-    }
-    tab$Lower <- tab$Estimate - 1.96 * tab$`Std. Error`
-    tab$Upper <- tab$Estimate + 1.96 * tab$`Std. Error`
-    tab <- dplyr::select(tab, Estimate, Lower, Upper, `Pr(>|z|)`)
-    tab$Level <- rownames(tab)
-    tab <- dplyr::select(tab, Level, dplyr::everything())
-    colnames(tab) <- c("Level", "OR", "Lower", "Upper", "P_value")
-    if (!is.null(ref_level) && nrow(tab) > 0) {
-      tab[1, ] <- c(paste0(ref_level, " [reference]"), rep(NA_real_, ncol(tab) - 1))
-    }
-    if (mod_exp) {
-      tab[, 2:4] <- round(exp(tab[, 2:4]), dp)
-    } else {
-      tab[, 2:4] <- round(tab[, 2:4], dp)
-    }
-    tab$P_value <- round(as.numeric(tab$P_value), 5)
-    rownames(tab) <- NULL
-    return(tab)
-  }
-  # ----- standard GLM / LM ---------------------------------------------------
-  tab <- tryCatch({
-    coef_summ <- summary(mod)$coefficients
-    se_col <- grep("Std\\.|Std\\. Error|Standard Error", colnames(coef_summ),
-                   ignore.case = TRUE)[1]
-    p_col <- grep("Pr\\(", colnames(coef_summ))[1]
-    if (is.na(se_col) || is.na(p_col)) stop("Cannot find SE or p-value col")
-    data.frame(Level = rownames(coef_summ), OR = coef_summ[, 1],
-               SE = coef_summ[, se_col], P_value = coef_summ[, p_col],
-               stringsAsFactors = FALSE)
-  }, error = function(e) NULL)
-  if (is.null(tab)) {
-    return(data.frame(Level = NA_character_, OR = NA_real_, Lower = NA_real_,
-                      Upper = NA_real_, P_value = NA_real_,
-                      stringsAsFactors = FALSE))
-  }
-  tab$Lower <- tab$OR - qnorm(0.975) * tab$SE
-  tab$Upper <- tab$OR + qnorm(0.975) * tab$SE
-  if (mod_exp) {
-    tab$OR <- exp(tab$OR)
-    tab$Lower <- exp(tab$Lower)
-    tab$Upper <- exp(tab$Upper)
-  }
-  tab <- dplyr::select(tab, Level, OR, Lower, Upper, P_value)
-  tab <- dplyr::mutate(tab,
-                       dplyr::across(OR:Upper, \(x) round(x, dp)),
-                       P_value = round(P_value, 5))
-  if (!is.null(ref_level) && nrow(tab) > 0) {
-    var_rows <- grep("Intercept", tab$Level, invert = TRUE)
-    if (length(var_rows) > 0) {
-      ref_row <- data.frame(Level = paste0(ref_level, " [reference]"),
-                            OR = NA_real_, Lower = NA_real_,
-                            Upper = NA_real_, P_value = NA_real_,
-                            stringsAsFactors = FALSE)
-      if (any(grepl("Intercept", tab$Level))) {
-        tab <- rbind(tab[1, , drop = FALSE], ref_row, tab[-1, , drop = FALSE])
-      } else {
-        tab <- rbind(ref_row, tab)
-      }
-    }
+  tab <- .react_build_coef_table(mod, ref_level = ref_level, dp = dp)
+  if (!nrow(tab)) {
+    return(data.frame(
+      Level = NA_character_,
+      term_raw = NA_character_,
+      OR = NA_real_,
+      Lower = NA_real_,
+      Upper = NA_real_,
+      P_value = NA_real_,
+      is_reference = NA,
+      is_intercept = NA,
+      model_family = NA_character_,
+      stringsAsFactors = FALSE
+    ))
   }
   rownames(tab) <- NULL
   tab
@@ -295,198 +229,49 @@ modelMakerSequentialRD <- function(variable_name,
                                                                "ethnic_new","imd_quintile_cat"),
                                    include_rd              = FALSE,
                                    n_sim                   = 100,
-                                   glm_control             = glm.control(maxit = 50)) {
+                                   glm_control             = glm.control(maxit = 50),
+                                   sample_strategy         = c("common_per_predictor", "per_model")) {
+  sample_strategy <- match.arg(sample_strategy)
 
-  if (!requireNamespace("data.table", quietly = TRUE))
-    stop("Please install the data.table package.")
+  found_adj <- intersect(joint_adjustment_vars, names(data))
+  missing_adj <- setdiff(joint_adjustment_vars, names(data))
+  if (length(missing_adj)) {
+    warning("Adjustment variables not found in data: ", paste(missing_adj, collapse = ", "))
+  }
+  found_adj <- setdiff(found_adj, variable_name)
 
-  ## ------------------------------------------------------------------ ##
-  ## 0.  Fast preliminaries                                             ##
-  ## ------------------------------------------------------------------ ##
-  DT <- data.table::as.data.table(data, keep.rownames = FALSE)
+  adj_sets <- lapply(seq_along(found_adj), function(i) found_adj[seq_len(i)])
+  names(adj_sets) <- found_adj
 
-  if (!all(c(variable_name, outcome) %in% names(DT)))
-    stop("variable_name or outcome not found in `data`.")
-
-  found_adj   <- intersect(joint_adjustment_vars, names(DT))
-  missed_adj  <- setdiff(joint_adjustment_vars, names(DT))
-  if (length(missed_adj))
-    warning("Adjustment variables not found in data: ",
-            paste(missed_adj, collapse = ", "))
-
-  family <- if (DT[, data.table::uniqueN(get(outcome), na.rm = TRUE)] == 2L) "binomial" else "gaussian"
-
-  ## ------------------------------------------------------------------ ##
-  ## 1.  Complete-case subset & validation                              ##
-  ## ------------------------------------------------------------------ ##
-  all_vars <- c(outcome, variable_name, found_adj)
-  DT <- DT[complete.cases(DT[, ..all_vars])]
-  if (nrow(DT) == 0L) stop("No complete cases available for analysis")
-
-  valid_info <- validate_factor_levels(DT, c(variable_name, found_adj))
-  DT         <- valid_info$data
-  if (length(valid_info$issues))
-    for (nm in names(valid_info$issues))
-      warning("Variable ", nm, ": ", valid_info$issues[[nm]])
-
-  ## ------------------------------------------------------------------ ##
-  ## 2.  Crude model                                                    ##
-  ## ------------------------------------------------------------------ ##
-  f_crude   <- as.formula(sprintf("%s ~ %s", outcome, variable_name))
-  crude_mod <- tryCatch(
-    glm(f_crude, data = DT, family = family, control = glm_control),
-    error   = function(e) { message("Crude model failed: ", e$message); NULL },
-    warning = function(w) { message("Crude model warning: ", w$message);
-      suppressWarnings(glm(f_crude, data = DT, family = family, control = glm_control)) }
+  out <- modelMakerAdjustedSetsRD(
+    variable_name = variable_name,
+    data = data,
+    sf = sf,
+    format = format,
+    simpleround = simpleround,
+    outcome = outcome,
+    ref_level = ref_level,
+    adj_sets = adj_sets,
+    include_crude = TRUE,
+    include_rd = include_rd,
+    n_sim = n_sim,
+    glm_control = glm_control,
+    sample_strategy = sample_strategy
   )
 
-  tab_univ <- if (is.null(crude_mod)) {
-    data.frame(Level = paste0(variable_name, "[Model failed]"),
-               OR = NA_real_, Lower = NA_real_, Upper = NA_real_,
-               P_value = NA_real_, stringsAsFactors = FALSE)
-  } else as.data.frame(makeORTable(crude_mod, ref_level = ref_level))
-
-  rd_univ <- if (include_rd && family == "binomial" && !is.null(crude_mod))
-    as.data.frame(safe_makeRDTable(crude_mod, variable_name, ref_level,
-                                   dp = 3, data = DT, n_sim = n_sim)) else NULL
-
-  if (is.factor(DT[[variable_name]])) {
-    tab_univ$Level <- sub(variable_name, "", tab_univ$Level, fixed = TRUE)
-    if (!is.null(rd_univ))
-      rd_univ$Level <- sub(variable_name, "", rd_univ$Level, fixed = TRUE)
-  }
-
-  ## ------------------------------------------------------------------ ##
-  ## 3.  Sequential adjustment loops                                    ##
-  ## ------------------------------------------------------------------ ##
-  mod.or.list  <- vector("list", length(found_adj))
-  mod.rd.list  <- vector("list", length(found_adj))
-
-  fit_prev <- crude_mod
-  rhs_prev <- variable_name
-
-  for (i in seq_along(found_adj)) {
-
-    rhs_prev <- paste(rhs_prev, found_adj[i], sep = " + ")
-    fit <- tryCatch(
-      update(fit_prev, as.formula(paste(outcome, "~", rhs_prev))),
-      error   = function(e) { message("Model step ", i, " failed: ", e$message); NULL },
-      warning = function(w) { message("Model step ", i, " warning: ", w$message);
-        suppressWarnings(update(fit_prev, as.formula(paste(outcome, "~", rhs_prev)))) }
-    )
-
-    if (is.null(fit)) {
-      mod.or.list[[i]] <- data.frame(Level = paste0(variable_name,
-                                                    "[Model failed at step ", i, "]"),
-                                     OR = NA_real_, Lower = NA_real_, Upper = NA_real_,
-                                     P_value = NA_real_, model = paste0("+", found_adj[i]),
-                                     stringsAsFactors = FALSE)
-      next
+  rename_cols <- function(df, suffix) {
+    if (is.null(df) || !nrow(df)) return(df)
+    for (adj_name in names(adj_sets)) {
+      old_name <- paste0("adj_", adj_name, suffix)
+      new_name <- paste0("plus_", adj_name, suffix)
+      if (old_name %in% names(df)) names(df)[names(df) == old_name] <- new_name
     }
-
-    fit_prev <- fit
-
-    tab_or <- as.data.frame(makeORTable(fit, ref_level = ref_level))
-
-    ## ---- NEW: determine selection before stripping var-name ---------- ##
-    idx_var <- grepl(variable_name, tab_or$Level, fixed = TRUE)
-
-    if (is.factor(DT[[variable_name]]))
-      tab_or$Level <- sub(variable_name, "", tab_or$Level, fixed = TRUE)
-
-    tab_or$model <- paste0("+", found_adj[i])
-    mod.or.list[[i]] <- tab_or[idx_var, , drop = FALSE]
-
-    if (include_rd && family == "binomial") {
-      rd_tab <- as.data.frame(safe_makeRDTable(fit, variable_name, ref_level,
-                                               dp = 3, data = DT, n_sim = n_sim))
-      if (!is.null(rd_tab) && nrow(rd_tab)) {
-        if (is.factor(DT[[variable_name]]))
-          rd_tab$Level <- sub(variable_name, "", rd_tab$Level, fixed = TRUE)
-        rd_tab$model <- paste0("+", found_adj[i])
-        mod.rd.list[[i]] <- rd_tab
-      }
-    }
+    df
   }
 
-  ## ------------------------------------------------------------------ ##
-  ## 4.  Assemble OR & RD summary tables                                ##
-  ## ------------------------------------------------------------------ ##
-  sf_fmt <- function(x, lower, upper, digits = sf) {
-    sprintf("%s (%s,%s)",
-            specifyDecimal(x, digits, format, simpleround),
-            specifyDecimal(lower, digits, format, simpleround),
-            specifyDecimal(upper, digits, format, simpleround))
-  }
-
-  # -------------------- OR table -------------------------------------- #
-  df_or <- data.frame(Level = tab_univ$Level,
-                      crude_mod_OR = sf_fmt(tab_univ$OR,
-                                            tab_univ$Lower,
-                                            tab_univ$Upper),
-                      stringsAsFactors = FALSE)
-
-  for (i in seq_along(mod.or.list)) {
-    if (is.null(mod.or.list[[i]])) next
-    tmp <- mod.or.list[[i]]
-    key <- paste0("plus_", found_adj[i], "_OR")
-    df_or <- merge(df_or,
-                   data.frame(Level = tmp$Level,
-                              val   = sf_fmt(tmp$OR, tmp$Lower, tmp$Upper),
-                              stringsAsFactors = FALSE),
-                   by = "Level", all.x = TRUE, sort = FALSE)
-    names(df_or)[names(df_or) == "val"] <- key
-  }
-
-  # -------------------- RD table -------------------------------------- #
-  df_rd <- NULL
-  if (include_rd) {
-    if (!is.null(rd_univ)) {
-      rd_univ$crude_mod_RD <- sf_fmt(rd_univ$RD, rd_univ$Lower, rd_univ$Upper, digits = sf + 1)
-      df_rd <- data.frame(Level = rd_univ$Level,
-                          crude_mod_RD = rd_univ$crude_mod_RD,
-                          stringsAsFactors = FALSE)
-    }
-
-    for (i in seq_along(mod.rd.list)) {
-      if (is.null(mod.rd.list[[i]])) next
-      tmp <- mod.rd.list[[i]]
-      key <- paste0("plus_", found_adj[i], "_RD")
-      df_rd <- merge(df_rd,
-                     data.frame(Level = tmp$Level,
-                                val   = sf_fmt(tmp$RD, tmp$Lower, tmp$Upper, digits = sf + 1),
-                                stringsAsFactors = FALSE),
-                     by = "Level", all.x = TRUE, sort = FALSE)
-      names(df_rd)[names(df_rd) == "val"] <- key
-    }
-  }
-
-  ## ------------------------------------------------------------------ ##
-  ## 5.  Final tidy-up                                                  ##
-  ## ------------------------------------------------------------------ ##
-  n_complete <- nrow(DT)
-  n_original <- sum(!is.na(data[[outcome]]))
-  if (n_complete < n_original)
-    message(sprintf("Variable %s: Using %d complete cases of %d (%.1f%%)",
-                    variable_name, n_complete, n_original,
-                    100 * n_complete / n_original))
-
-  df_or[["Nobs_in_model"]] <- n_complete
-  df_or <- df_or |> dplyr::select(Level, Nobs_in_model, dplyr::everything())
-
-  if (!is.null(df_rd)) {
-    df_rd[["Nobs_in_model"]] <- n_complete
-    df_rd <- df_rd |> dplyr::select(Level, Nobs_in_model, dplyr::everything())
-  }
-
-  list(model_df_ORs             = df_or,
-       model_df_RDs             = df_rd,
-       crude_model_OR           = tab_univ,
-       crude_model_RD           = rd_univ,
-       adj_or_outputs           = mod.or.list,
-       adj_rd_outputs           = mod.rd.list,
-       n_complete_cases         = n_complete,
-       n_original_cases         = n_original)
+  out$model_df_ORs <- rename_cols(out$model_df_ORs, "_OR")
+  out$model_df_RDs <- rename_cols(out$model_df_RDs, "_RD")
+  out
 }
 
 
@@ -891,7 +676,7 @@ compute_level_order <- function(x, ref_level = NULL) {
 .coerce_df_types <- function(df, kind = c("df_or","plot_or","df_rd","plot_rd","diagnostics")) {
   kind <- match.arg(kind)
   if (!nrow(df)) return(df)
-  to_char <- intersect(c("Level","Category","model","adjustment_label","stage","adjusted_vars","status","error_msg","warnings","separation_msg"), names(df))
+  to_char <- intersect(c("Level","Category","term_raw","model","model_family","adjustment_label","stage","adjusted_vars","status","error_msg","warnings","separation_msg"), names(df))
   for (nm in to_char) df[[nm]] <- as.character(df[[nm]])
   if (kind %in% c("plot_or","plot_rd")) {
     if ("adjustment" %in% names(df)) df$adjustment <- suppressWarnings(as.integer(df$adjustment))
@@ -996,45 +781,7 @@ compute_level_order <- function(x, ref_level = NULL) {
 # =========================
 
 .run_glm_captured <- function(fml, data, family, control) {
-  warn_store <- character()
-  fit <- tryCatch(
-    withCallingHandlers(
-      glm(fml, data = data, family = family, control = control),
-      warning = function(w) { warn_store <<- c(warn_store, conditionMessage(w)); invokeRestart("muffleWarning") }
-    ),
-    error = function(e) structure(list(`__error__` = conditionMessage(e)), class = "glm_error")
-  )
-  if (inherits(fit, "glm_error")) return(list(fit = NULL, warnings = warn_store, error = fit$`__error__`))
-  list(fit = fit, warnings = warn_store, error = NULL)
-}
-
-safe_makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
-                             data = NULL, n_sim = 100, seed = 1) {
-  out <- tryCatch(
-    makeRDTable(mod = mod, variable_name = variable_name, ref_level = ref_level,
-                dp = dp, data = data, n_sim = n_sim, seed = seed),
-    error = function(e) { message("Risk-difference table failed: ", e$message); NULL }
-  )
-  if (is.null(out)) return(NULL)
-  mf <- tryCatch(model.frame(mod), error = function(e) NULL)
-  if (!is.null(mf) && variable_name %in% names(mf) && is.factor(mf[[variable_name]])) {
-    lvls <- levels(mf[[variable_name]])
-    if (is.null(ref_level) || !(ref_level %in% lvls)) ref_level <- lvls[1]
-    ref_lbl <- paste0(ref_level, " [reference]")
-    if (!any(grepl("\\[reference\\]$", out$Level))) {
-      ref_row <- data.frame(Level = ref_lbl, RD = NA_real_, Lower = NA_real_,
-                            Upper = NA_real_, P_value = NA_real_, stringsAsFactors = FALSE)
-      out <- rbind(ref_row, out)
-    }
-  }
-  out
-}
-
-compute_level_order <- function(x, ref_level = NULL) {
-  if (!is.factor(x)) return(NULL)
-  lvls <- levels(x)
-  ref  <- if (is.null(ref_level) || !(ref_level %in% lvls)) lvls[1] else ref_level
-  c(paste0(ref, " [reference]"), setdiff(lvls, ref))
+  .react_fit_glm_captured(fml, data = data, family = family, control = control)
 }
 
 
@@ -1056,212 +803,132 @@ modelMakerAdjustedSetsRD <- function(variable_name,
                                      include_crude           = TRUE,
                                      include_rd              = FALSE,
                                      n_sim                   = 100,
-                                     glm_control             = glm.control(maxit = 50)) {
+                                     glm_control             = glm.control(maxit = 50),
+                                     sample_strategy         = c("common_per_predictor", "per_model")) {
+  sample_strategy <- match.arg(sample_strategy)
 
-  if (!requireNamespace("data.table", quietly = TRUE))
-    stop("Please install the data.table package.")
-
-  DT <- data.table::as.data.table(data, keep.rownames = FALSE)
-  if (!all(c(variable_name, outcome) %in% names(DT)))
+  if (!is.data.frame(data)) stop("data must be a data.frame")
+  if (!all(c(variable_name, outcome) %in% names(data))) {
     stop("variable_name or outcome not found in `data`.")
-
-  family <- if (DT[, data.table::uniqueN(get(outcome), na.rm = TRUE)] == 2L) "binomial" else "gaussian"
-
-  all_covs <- unique(c(outcome, variable_name, unique(unlist(adj_sets, use.names = FALSE))))
-  all_covs <- all_covs[all_covs %in% names(DT)]
-  DT <- DT[complete.cases(DT[, ..all_covs])]
-  if (nrow(DT) == 0L) stop("No complete cases available for analysis")
-
-  is_cat <- is.factor(DT[[variable_name]])
-  comp_lvls <- character(0)
-  base_order <- NULL
-  if (is_cat) {
-    lvls <- levels(DT[[variable_name]])
-    if (is.null(ref_level) || !(ref_level %in% lvls)) ref_level <- lvls[1]
-    comp_lvls <- setdiff(lvls, ref_level)
-    base_order <- compute_level_order(DT[[variable_name]], ref_level = ref_level)
   }
 
-  valid_info <- validate_factor_levels(DT, c(variable_name, unique(unlist(adj_sets, use.names = FALSE))))
-  DT <- valid_info$data
-  if (length(valid_info$issues))
-    for (nm in names(valid_info$issues))
-      warning("Variable ", nm, ": ", valid_info$issues[[nm]])
-
-  if (length(adj_sets) == 0L) adj_sets <- list(`full` = character(0))
+  if (length(adj_sets) == 0L) adj_sets <- list(full = character(0))
   if (is.null(names(adj_sets)) || any(!nzchar(names(adj_sets)))) {
     names(adj_sets) <- if (length(adj_sets) == 1L) "full" else paste0("set", seq_along(adj_sets))
   }
 
-  sf_fmt <- function(x, lower, upper, digits = sf) {
-    sprintf("%s (%s,%s)",
-            specifyDecimal(x, digits, format, simpleround),
-            specifyDecimal(lower, digits, format, simpleround),
-            specifyDecimal(upper, digits, format, simpleround))
+  used_adjusters <- unique(unlist(adj_sets, use.names = FALSE))
+  missing_adj <- setdiff(used_adjusters, names(data))
+  if (length(missing_adj)) {
+    warning("Adjustment variables not found in data: ", paste(missing_adj, collapse = ", "))
   }
 
-  diagnostics <- list()
-  add_diag <- function(stage, adjusted_vars, fit_res, fit_obj = NULL, rd_tab = NULL) {
-    vcok <- NA
-    nobs <- NA
-    if (!is.null(fit_obj)) {
-      vcok <- tryCatch({
-        V <- vcov(fit_obj)
-        !(is.null(V) || anyNA(V))
-      }, error = function(e) FALSE)
-      nobs <- tryCatch(nrow(model.frame(fit_obj)), error = function(e) NA_integer_)
-    }
-    sep_msg <- check_perfect_separation(DT, outcome, variable_name)
-    diagnostics[[length(diagnostics) + 1L]] <<- data.frame(
-      stage           = stage,
-      adjusted_vars   = adjusted_vars,
-      status          = if (!is.null(fit_res$error)) "error" else if (length(fit_res$warnings)) "warning" else "ok",
-      error_msg       = if (is.null(fit_res$error)) "" else fit_res$error,
-      warnings        = paste(unique(fit_res$warnings), collapse = " | "),
-      nobs            = nobs,
-      vcov_ok         = isTRUE(vcok),
-      separation_msg  = if (is.null(sep_msg)) "" else sep_msg,
-      rd_rows         = if (is.null(rd_tab)) NA_integer_ else NROW(rd_tab),
-      stringsAsFactors = FALSE
+  adj_sets <- lapply(adj_sets, function(x) {
+    x <- intersect(x, names(data))
+    setdiff(x, variable_name)
+  })
+
+  stage_specs <- list()
+  if (isTRUE(include_crude)) {
+    stage_specs[[length(stage_specs) + 1L]] <- list(
+      stage_id = "crude",
+      adjusted_vars = character(0),
+      model = "crude",
+      wide_col = "crude_mod_OR",
+      adjustment = 0L
+    )
+  }
+  for (i in seq_along(adj_sets)) {
+    adj_name <- names(adj_sets)[[i]]
+    adj_vars <- adj_sets[[i]]
+    stage_specs[[length(stage_specs) + 1L]] <- list(
+      stage_id = adj_name,
+      adjusted_vars = adj_vars,
+      model = if (length(adj_vars)) paste0("+", paste(adj_vars, collapse = "+")) else "full",
+      wide_col = paste0("adj_", adj_name, "_OR"),
+      adjustment = if (isTRUE(include_crude)) i else i
     )
   }
 
-  crude_mod <- NULL; tab_univ  <- NULL; rd_univ <- NULL
+  runner <- .react_run_or_stages(
+    data = data,
+    predictor = variable_name,
+    outcome = outcome,
+    stage_specs = stage_specs,
+    sample_strategy = sample_strategy,
+    glm_control = glm_control,
+    include_intercept = TRUE,
+    ref_level = ref_level
+  )
 
-  if (include_crude) {
-    f_crude <- as.formula(sprintf("%s ~ %s", outcome, variable_name))
-    fit0 <- .run_glm_captured(f_crude, DT, family, glm_control)
-    if (is.null(fit0$error) && !is.null(fit0$fit)) {
-      crude_mod <- fit0$fit
-      tab_univ <- as.data.frame(makeORTable(crude_mod, ref_level = ref_level))
-      tab_univ <- tab_univ[!grepl("Intercept", tab_univ$Level, ignore.case = TRUE), , drop = FALSE]
-      if (is_cat) tab_univ$Level <- sub(variable_name, "", tab_univ$Level, fixed = TRUE)
-      if (include_rd && family == "binomial") {
-        rd_univ <- as.data.frame(safe_makeRDTable(crude_mod, variable_name, ref_level, dp = 3, data = DT, n_sim = n_sim))
-        if (!is.null(rd_univ) && is_cat) rd_univ$Level <- sub(variable_name, "", rd_univ$Level, fixed = TRUE)
-      }
+  or_rows <- runner$rows
+  df_or <- .react_wide_from_long(
+    long_df = or_rows,
+    effect_col = "OR",
+    sf = sf,
+    format = format,
+    simpleround = simpleround,
+    include_nobs = identical(sample_strategy, "common_per_predictor")
+  )
+
+  rd_rows <- data.frame()
+  if (isTRUE(include_rd) && identical(runner$family, "binomial")) {
+    rd_parts <- lapply(runner$stages, .react_extract_rd_rows, predictor = variable_name, n_sim = n_sim, dp = 3)
+    rd_rows <- dplyr::bind_rows(rd_parts)
+  }
+  df_rd <- if (nrow(rd_rows)) {
+    .react_wide_from_long(
+      long_df = rd_rows,
+      effect_col = "RD",
+      sf = sf + 1L,
+      format = format,
+      simpleround = simpleround,
+      include_nobs = identical(sample_strategy, "common_per_predictor")
+    )
+  } else NULL
+
+  diag_df <- runner$diagnostics
+  if (nrow(diag_df)) {
+    rd_counts <- integer(nrow(diag_df))
+    if (nrow(rd_rows)) {
+      rd_count_map <- tapply(rd_rows$Level, rd_rows$stage_id, length)
+      rd_counts <- unname(rd_count_map[match(diag_df$stage, names(rd_count_map))])
+      rd_counts[is.na(rd_counts)] <- 0L
     }
-    add_diag(stage = "crude", adjusted_vars = "", fit_res = fit0, fit_obj = crude_mod, rd_tab = rd_univ)
+    diag_df$rd_rows <- rd_counts
   }
 
-  adj_or_outputs <- vector("list", length(adj_sets))
-  adj_rd_outputs <- vector("list", length(adj_sets))
+  crude_or <- if (isTRUE(include_crude)) or_rows[or_rows$stage_id == "crude", , drop = FALSE] else NULL
+  crude_rd <- if (isTRUE(include_rd) && isTRUE(include_crude) && nrow(rd_rows)) {
+    rd_rows[rd_rows$stage_id == "crude", , drop = FALSE]
+  } else NULL
+
+  adj_or_outputs <- lapply(names(adj_sets), function(adj_name) {
+    or_rows[or_rows$stage_id == adj_name, , drop = FALSE]
+  })
   names(adj_or_outputs) <- names(adj_sets)
+
+  adj_rd_outputs <- lapply(names(adj_sets), function(adj_name) {
+    if (!nrow(rd_rows)) return(data.frame())
+    rd_rows[rd_rows$stage_id == adj_name, , drop = FALSE]
+  })
   names(adj_rd_outputs) <- names(adj_sets)
 
-  for (i in seq_along(adj_sets)) {
-    this_adj <- adj_sets[[i]]
-    rhs <- paste(c(variable_name, this_adj), collapse = " + ")
-    fml <- as.formula(paste(outcome, "~", rhs))
-    fiti <- .run_glm_captured(fml, DT, family, glm_control)
+  stage_nobs <- vapply(runner$stages, function(stage) {
+    if (is.null(stage$data)) 0L else nrow(stage$data)
+  }, integer(1))
 
-    tab_or <- NULL; rd_tab <- NULL
-    if (is.null(fiti$error) && !is.null(fiti$fit)) {
-      tab_or <- as.data.frame(makeORTable(fiti$fit, ref_level = ref_level))
-      keep_idx <- grepl(variable_name, tab_or$Level, fixed = TRUE)
-      ref_idx  <- grepl("\\[reference\\]$", tab_or$Level)
-      # keep exposure rows + the [reference] row
-      rows_keep <- keep_idx | ref_idx
-      if (is_cat) tab_or$Level <- sub(variable_name, "", tab_or$Level, fixed = TRUE)
-      tab_or$model <- paste0("+", paste(this_adj, collapse = "+"))
-      adj_or_outputs[[i]] <- tab_or[rows_keep, , drop = FALSE]
-
-      if (include_rd && family == "binomial") {
-        rd_tab <- as.data.frame(safe_makeRDTable(fiti$fit, variable_name, ref_level, dp = 3, data = DT, n_sim = n_sim))
-        if (!is.null(rd_tab) && nrow(rd_tab)) {
-          if (is_cat) rd_tab$Level <- sub(variable_name, "", rd_tab$Level, fixed = TRUE)
-          rd_tab$model <- paste0("+", paste(this_adj, collapse = "+"))
-          # KEEP reference in RD plot list
-          adj_rd_outputs[[i]] <- rd_tab
-        }
-      }
-    }
-    add_diag(stage = names(adj_sets)[i], adjusted_vars = paste(this_adj, collapse = "+"),
-             fit_res = fiti, fit_obj = if (is.null(fiti$error)) fiti$fit else NULL, rd_tab = rd_tab)
-  }
-
-  if (!is.null(tab_univ)) {
-    df_or <- data.frame(Level = tab_univ$Level,
-                        crude_mod_OR = sf_fmt(tab_univ$OR, tab_univ$Lower, tab_univ$Upper),
-                        stringsAsFactors = FALSE)
-  } else {
-    if (is_cat) base_levels <- c(paste0(ref_level, " [reference]"), comp_lvls)
-    else base_levels <- unique(unlist(lapply(adj_or_outputs, function(x) x$Level), use.names = FALSE))
-    df_or <- data.frame(Level = base_levels, stringsAsFactors = FALSE)
-  }
-
-  for (nm in names(adj_or_outputs)) {
-    tmp <- adj_or_outputs[[nm]]
-    if (is.null(tmp) || !nrow(tmp)) next
-    key <- paste0("adj_", nm, "_OR")
-    df_or <- merge(df_or,
-                   data.frame(Level = tmp$Level,
-                              val   = sf_fmt(tmp$OR, tmp$Lower, tmp$Upper),
-                              stringsAsFactors = FALSE),
-                   by = "Level", all.x = TRUE, sort = FALSE)
-    names(df_or)[names(df_or) == "val"] <- key
-  }
-
-  df_rd <- NULL
-  if (include_rd) {
-    if (!is.null(rd_univ)) {
-      df_rd <- data.frame(Level = rd_univ$Level,
-                          crude_mod_RD = sprintf("%s (%s,%s)",
-                                                 specifyDecimal(rd_univ$RD, sf + 1, format, simpleround),
-                                                 specifyDecimal(rd_univ$Lower, sf + 1, format, simpleround),
-                                                 specifyDecimal(rd_univ$Upper, sf + 1, format, simpleround)),
-                          stringsAsFactors = FALSE)
-    } else {
-      if (is_cat) base_levels <- c(paste0(ref_level, " [reference]"), comp_lvls)
-      else base_levels <- unique(unlist(lapply(adj_rd_outputs, function(x) x$Level), use.names = FALSE))
-      df_rd <- data.frame(Level = base_levels, stringsAsFactors = FALSE)
-    }
-    for (nm in names(adj_rd_outputs)) {
-      tmp <- adj_rd_outputs[[nm]]
-      if (is.null(tmp) || !nrow(tmp)) next
-      key <- paste0("adj_", nm, "_RD")
-      df_rd <- merge(df_rd,
-                     data.frame(Level = tmp$Level,
-                                val   = sprintf("%s (%s,%s)",
-                                                specifyDecimal(tmp$RD, sf + 1, format, simpleround),
-                                                specifyDecimal(tmp$Lower, sf + 1, format, simpleround),
-                                                specifyDecimal(tmp$Upper, sf + 1, format, simpleround)),
-                                stringsAsFactors = FALSE),
-                     by = "Level", all.x = TRUE, sort = FALSE)
-      names(df_rd)[names(df_rd) == "val"] <- key
-    }
-  }
-
-  if (is_cat && length(base_order)) {
-    ord <- match(df_or$Level, base_order)
-    df_or <- df_or[order(ord, na.last = TRUE), , drop = FALSE]
-    if (!is.null(df_rd)) {
-      ord_rd <- match(df_rd$Level, base_order)
-      df_rd  <- df_rd[order(ord_rd, na.last = TRUE), , drop = FALSE]
-    }
-  }
-
-  n_complete <- nrow(DT)
-  n_original <- sum(!is.na(data[[outcome]]))
-  if (nrow(df_or)) {
-    df_or[["Nobs_in_model"]] <- n_complete
-    df_or <- df_or |> dplyr::select(Level, Nobs_in_model, dplyr::everything())
-  }
-  if (include_rd && nrow(df_rd)) {
-    df_rd[["Nobs_in_model"]] <- n_complete
-    df_rd <- df_rd |> dplyr::select(Level, Nobs_in_model, dplyr::everything())
-  }
-
-  diag_df <- if (length(diagnostics)) do.call(rbind, diagnostics) else data.frame()
-  list(model_df_ORs     = df_or,
-       model_df_RDs     = if (include_rd) df_rd else NULL,
-       crude_model_OR   = tab_univ,
-       crude_model_RD   = rd_univ,
-       adj_or_outputs   = adj_or_outputs,   # now include [reference]
-       adj_rd_outputs   = adj_rd_outputs,   # now include [reference]
-       diagnostics      = diag_df,
-       n_complete_cases = n_complete,
-       n_original_cases = n_original)
+  list(
+    model_df_ORs = df_or,
+    model_df_RDs = if (isTRUE(include_rd)) df_rd else NULL,
+    crude_model_OR = crude_or,
+    crude_model_RD = crude_rd,
+    adj_or_outputs = adj_or_outputs,
+    adj_rd_outputs = adj_rd_outputs,
+    diagnostics = diag_df,
+    n_complete_cases = if (length(stage_nobs)) max(stage_nobs) else 0L,
+    n_original_cases = sum(!is.na(data[[outcome]]))
+  )
 }
 
 
@@ -1287,7 +954,9 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
                               max_retries = 1,
                               # NEW: robustness for future backend
                               parallel_restarts = 2,
-                              retry_sleep = 1) {
+                              retry_sleep = 1,
+                              sample_strategy = c("common_per_predictor", "per_model")) {
+  sample_strategy <- match.arg(sample_strategy)
 
   if (!is.data.frame(dat)) stop("dat must be a data.frame")
   if (!outcome %in% names(dat)) stop(paste("Outcome", outcome, "not found"))
@@ -1299,8 +968,7 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
   }
   if (length(list_of_variables_of_interest) == 0) stop("No variables to analyse")
 
-  num_y  <- length(unique(na.omit(dplyr::pull(dat, outcome))))
-  family <- if (num_y == 2L) "binomial" else "gaussian"
+  family <- .react_detect_outcome_family(dat[[outcome]], outcome = outcome)
   message(if (family == "binomial") "Assuming binomial outcome" else "Assuming gaussian outcome")
 
   # --- save paths (RDS-first checkpointing assumed available) --------------
@@ -1340,15 +1008,17 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
 
   # ---------- per-variable worker (unchanged modelling logic) --------------
   single_var_runner <- function(pred_name, save_immediately = TRUE) {
-    ref_lv <- if (is.factor(dat[[pred_name]])) levels(dat[[pred_name]])[1] else NULL
+    ref_lv <- if (is.factor(dat[[pred_name]]) && !is.ordered(dat[[pred_name]])) levels(dat[[pred_name]])[1] else NULL
+    pred_adjusters <- setdiff(joint_adjustment_vars, pred_name)
     sets <- if (isTRUE(incremental)) {
-      build_cumulative_sets(joint_adjustment_vars)
+      build_cumulative_sets(pred_adjusters)
     } else {
-      if (is.null(adj_sets)) list(full = joint_adjustment_vars) else {
-        if (is.list(adj_sets) && is.null(names(adj_sets))) {
-          names(adj_sets) <- if (length(adj_sets) == 1L) "full" else paste0("set", seq_along(adj_sets))
+      if (is.null(adj_sets)) list(full = pred_adjusters) else {
+        sets_local <- adj_sets
+        if (is.list(sets_local) && is.null(names(sets_local))) {
+          names(sets_local) <- if (length(sets_local) == 1L) "full" else paste0("set", seq_along(sets_local))
         }
-        adj_sets
+        lapply(sets_local, function(x) setdiff(x, pred_name))
       }
     }
 
@@ -1365,7 +1035,8 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
                                  ref_level = ref_lv,
                                  adj_sets = sets, include_crude = include_crude,
                                  include_rd = include_rd, n_sim = n_sim,
-                                 glm_control = ctrl),
+                                 glm_control = ctrl,
+                                 sample_strategy = sample_strategy),
         error = function(e) e
       )
       if (inherits(res, "error")) {
@@ -1421,9 +1092,23 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
 
     res <- a1$res
 
+    if (isTRUE(remove_intercept_from_results) && !is.null(res$model_df_ORs) && nrow(res$model_df_ORs)) {
+      or_tables <- c(list(res$crude_model_OR), res$adj_or_outputs)
+      or_tables <- Filter(function(x) !is.null(x) && nrow(x), or_tables)
+      if (length(or_tables)) {
+        or_long_all <- dplyr::bind_rows(or_tables)
+        intercept_levels <- unique(or_long_all$Level[ifelse(is.na(or_long_all$is_intercept), FALSE, or_long_all$is_intercept)])
+        if (length(intercept_levels)) {
+          res$model_df_ORs <- res$model_df_ORs[!res$model_df_ORs$Level %in% intercept_levels, , drop = FALSE]
+        }
+      }
+    }
+
     # --------- plot tables (keep [reference]) ---------
     tidy_plot_or <- dplyr::bind_rows(res$adj_or_outputs, .id = "adjustment_label")
-    if (nrow(tidy_plot_or)) tidy_plot_or <- dplyr::left_join(tidy_plot_or, adj_map, by = "adjustment_label")
+    if (nrow(tidy_plot_or) && !"adjustment" %in% names(tidy_plot_or)) {
+      tidy_plot_or <- dplyr::left_join(tidy_plot_or, adj_map, by = "adjustment_label")
+    }
 
     crude_or_plot <- NULL
     if (isTRUE(include_crude) && !is.null(res$crude_model_OR) && nrow(res$crude_model_OR)) {
@@ -1436,9 +1121,14 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
     }
     if (!is.null(crude_or_plot) && nrow(crude_or_plot)) tidy_plot_or <- dplyr::bind_rows(crude_or_plot, tidy_plot_or)
     if (!"adjustment" %in% names(tidy_plot_or) && nrow(tidy_plot_or)) tidy_plot_or$adjustment <- ifelse(tidy_plot_or$model == "crude", 0L, NA_integer_)
+    if (isTRUE(remove_intercept_from_results) && nrow(tidy_plot_or) && "is_intercept" %in% names(tidy_plot_or)) {
+      tidy_plot_or <- tidy_plot_or[!tidy_plot_or$is_intercept, , drop = FALSE]
+    }
 
     tidy_plot_rd <- dplyr::bind_rows(res$adj_rd_outputs, .id = "adjustment_label")
-    if (nrow(tidy_plot_rd)) tidy_plot_rd <- dplyr::left_join(tidy_plot_rd, adj_map, by = "adjustment_label")
+    if (nrow(tidy_plot_rd) && !"adjustment" %in% names(tidy_plot_rd)) {
+      tidy_plot_rd <- dplyr::left_join(tidy_plot_rd, adj_map, by = "adjustment_label")
+    }
 
     crude_rd_plot <- NULL
     if (isTRUE(include_rd) && isTRUE(include_crude) && !is.null(res$crude_model_RD) && nrow(res$crude_model_RD)) {
@@ -1528,8 +1218,8 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
   }
 
   if (remove_intercept_from_results) {
-    if ("Level" %in% names(out_plot_or)) out_plot_or <- dplyr::filter(out_plot_or, !grepl("Intercept", Level, TRUE))
-    if ("Level" %in% names(out_plot_rd)) out_plot_rd <- dplyr::filter(out_plot_rd, !grepl("Intercept", Level, TRUE))
+    if ("is_intercept" %in% names(out_plot_or)) out_plot_or <- out_plot_or[!out_plot_or$is_intercept, , drop = FALSE]
+    if ("is_intercept" %in% names(out_plot_rd)) out_plot_rd <- out_plot_rd[!out_plot_rd$is_intercept, , drop = FALSE]
   }
 
   if ("Level" %in% names(out_df_or))   out_df_or   <- dplyr::rename(out_df_or,   Category = Level)

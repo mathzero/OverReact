@@ -19,152 +19,80 @@
 
 
 ### Main function to create a sequentially adjusted model. Depends on makeORTable
-modelMakerSequential <- function(variable_name, data=dfRes,sf=2,format ="f",simpleround =F,
-                                 outcome="res", ref_level =NULL,
-                                 joint_adjustment_vars = c("age_group_named","sex","region_named",
-                                                           "ethnic_new", "imd_quintile_cat")){
+modelMakerSequential <- function(variable_name, data = dfRes, sf = 2, format = "f", simpleround = FALSE,
+                                 outcome = "res", ref_level = NULL,
+                                 joint_adjustment_vars = c("age_group_named", "sex", "region_named",
+                                                           "ethnic_new", "imd_quintile_cat"),
+                                 sample_strategy = c("common_per_predictor", "per_model"),
+                                 glm_control = stats::glm.control(maxit = 50)) {
+  sample_strategy <- match.arg(sample_strategy)
 
-  # determine outcome type
-  num_y=length(unique(pull(data,outcome)))
-  if(num_y==2){
-    # print("Assuming binomial model")
-    family="binomial"
-  }else if (num_y>2){
-    # print("Assuming gaussian model")
-    family="gaussian"
-  }else{
-    stop("Less than two unique values of outcome variable are found. Aborting modelling")
+  if (!is.data.frame(data)) stop("data must be a data.frame")
+  if (!variable_name %in% names(data)) stop("Variable ", variable_name, " not found in data.")
+  if (!outcome %in% names(data)) stop("Outcome ", outcome, " not found in data.")
+
+  found_adj <- intersect(joint_adjustment_vars, names(data))
+  missing_adj <- setdiff(joint_adjustment_vars, names(data))
+  if (length(missing_adj)) {
+    warning("Adjustment variables not found in data: ", paste(missing_adj, collapse = ", "))
   }
+  found_adj <- setdiff(found_adj, variable_name)
 
-
-  classes <- lapply(data[,c(variable_name,joint_adjustment_vars)], class) %>% unlist()
-
-  if("character" %in% classes){
-    print("These variables are character class. Consider converting to factor:")
-    print(c(variable_name,joint_adjustment_vars)[classes == "character"])
-
-  }
-  ### models will fail if insufficient data to work with, so putting this in as a quick failsafe.
-  ### With world enough and time, much better to replace with a trycatch
-
-  # check that we don't have an insufficient amount of data for the number of categories
-  # numvals <- length(unique(pull(data,variable_name)))
-  # nobs <- sum(!is.na(pull(data,variable_name)))
-  #
-  # if(class(data[,variable_name]) %in% c("factor","character") & nobs<=numvals+30 ){
-  #   print("May not be enough data to run this model")
-  # }else{
-
-  ### create univariate model
-  f <- as.formula(paste(outcome," ~",variable_name))
-  univ.mod.glm <- try(glm(f,  data = data,
-                          family = family),silent = T)
-  if(is(univ.mod.glm,"try-error")){
-    tab_univ <-     data.frame(Level=NA, OR=NA, Lower=NA,
-                               Upper=NA, P_value=NA)
-
-  }else{
-
-    ### Create OR table
-    tab_univ <- makeORTable(univ.mod.glm, ref_level=ref_level)
-
-    ### Add model name
-    tab_univ$model <- "Crude"
-    tab_univ$Level <- stringr::str_remove(tab_univ$Level,variable_name)
-
-
-  }
-  sel_indx_univ <- grepl(pattern = "\\[reference\\]$", x = tab_univ$Level) |
-    grepl(pattern = variable_name, x = tab_univ$Level, ignore.case = TRUE)
-  sel_indx_univ[[1]] <- TRUE
-  tab_univ_plot <- tab_univ[sel_indx_univ, , drop = FALSE]
-  # create empty lists for results
-  mod.results.list <- list()
-  mod.results.list.forplot <- list()
-
-
-  for (i in 1:length(joint_adjustment_vars)){
-
-
-    # print(paste0("Now processing additional covariate:", joint_adjustment_vars[i]))
-
-    ### adjusted for age and gender
-    f <- as.formula(paste(outcome," ~", paste(unique(c(variable_name,joint_adjustment_vars[1:i])),
-                                              collapse = "+")))
-    # run model
-    mod <- univ.mod.glm <- try(glm(f,  data = data,
-                                   family = family),silent = T)
-
-    if(is(univ.mod.glm,"try-error")){
-      tab <-     data.frame(Level=NA, OR=NA, Lower=NA,
-                            Upper=NA, P_value=NA,
-                            model=paste0("+", joint_adjustment_vars[[i]]))
-      # save for plot
-      mod.results.list.forplot[[i]] <- tab
-
-      ### Add to list
-      mod.results.list[[i]] <- tab
-    }else{
-
-      ### Create OR table
-      tab <- makeORTable(mod, ref_level=ref_level)
-
-      ### Add model name
-      tab$model <- paste0("+", joint_adjustment_vars[[i]])
-
-
-      ### Select only the rows that refer to the variable of interest (for plotting)
-      sel_indx=grepl(pattern = "\\[reference\\]$", x = tab$Level) |
-        grepl(pattern = variable_name,x = tab$Level,ignore.case = T)
-      sel_indx[[1]] <- TRUE # we always want the first one
-
-      # remove variable name
-      tab$Level <- stringr::str_remove(tab$Level,variable_name)
-
-
-      # save for plot
-      mod.results.list.forplot[[i]] <- tab[sel_indx,]
-
-      ### Add to list
-      mod.results.list[[i]] <- tab[sel_indx,]
+  stage_specs <- vector("list", length(found_adj) + 1L)
+  stage_specs[[1]] <- list(
+    stage_id = "crude",
+    adjusted_vars = character(0),
+    model = "Crude",
+    wide_col = "crude_mod_OR",
+    adjustment = 1L
+  )
+  if (length(found_adj)) {
+    for (i in seq_along(found_adj)) {
+      stage_specs[[i + 1L]] <- list(
+        stage_id = paste0("plus_", found_adj[[i]]),
+        adjusted_vars = found_adj[seq_len(i)],
+        model = paste0("+", found_adj[[i]]),
+        wide_col = paste0("plus_", found_adj[[i]]),
+        adjustment = i + 1L
+      )
     }
   }
 
-  ### Now we add all the models together into one big DF
-  df.output=data.frame(Level=tab_univ_plot$Level)
-  df.output$crude_mod_OR <- c(paste0(specifyDecimal(x = tab_univ_plot$OR, k = sf,format = format,simpleround =simpleround),
-                                     " (",
-                                     specifyDecimal(tab_univ_plot$Lower,  k = sf,format = format,simpleround =simpleround),
-                                     ",",
-                                     specifyDecimal(tab_univ_plot$Upper,  k = sf,format = format,simpleround =simpleround),
-                                     ")"))
+  runner <- .react_run_or_stages(
+    data = data,
+    predictor = variable_name,
+    outcome = outcome,
+    stage_specs = stage_specs,
+    sample_strategy = sample_strategy,
+    glm_control = glm_control,
+    include_intercept = TRUE,
+    ref_level = ref_level
+  )
 
-  names(mod.results.list.forplot)  <- joint_adjustment_vars
-  mod.results.list.forplot$crude <- tab_univ_plot
+  plot_rows <- runner$rows
+  wide_rows <- .react_wide_from_long(
+    long_df = plot_rows,
+    effect_col = "OR",
+    sf = sf,
+    format = format,
+    simpleround = simpleround,
+    include_nobs = FALSE
+  )
 
+  crude_output <- plot_rows[plot_rows$stage_id == "crude", , drop = FALSE]
+  adj_outputs <- lapply(found_adj, function(adj_name) {
+    plot_rows[plot_rows$stage_id == paste0("plus_", adj_name), , drop = FALSE]
+  })
+  names(adj_outputs) <- found_adj
+  adj_outputs$crude <- crude_output
 
-  for (i in 1:length(joint_adjustment_vars)){
-    # print(i)
-    mod.results.list[[i]]$OR_concat <- c(paste0(specifyDecimal(mod.results.list[[i]]$OR,  k = sf,format = format,simpleround =simpleround),
-                                                " (",
-                                                specifyDecimal(mod.results.list[[i]]$Lower, k = sf,format = format,simpleround =simpleround),
-                                                ",",
-                                                specifyDecimal(mod.results.list[[i]]$Upper,  k = sf,format = format,simpleround =simpleround),
-                                                ")"))
-
-    df.output <- plyr::join(df.output, mod.results.list[[i]] %>% dplyr::select(Level, OR_concat),
-                            by="Level", type = "left", match = "first")
-    names(df.output)[i+2]=paste0("plus_", joint_adjustment_vars[[i]])
-
-  }
-
-  # }
-  df.output.abbrev <- df.output
-
-  return(list(model_df=df.output,
-              model_df_predictorORs_only = df.output.abbrev,
-              crude_model_output=tab_univ,
-              adj_model_outputs=mod.results.list.forplot))
+  list(
+    model_df = wide_rows,
+    model_df_predictorORs_only = wide_rows,
+    crude_model_output = crude_output,
+    adj_model_outputs = adj_outputs,
+    diagnostics = runner$diagnostics
+  )
 }
 
 
@@ -190,19 +118,6 @@ get_pretty_name <- function(var, dat, name_fun = NULL, auto_pretty = TRUE) {
   }
   var
 }
-
-# =============================================================================
-# 2. Helper: decimal formatter -------------------------------------------------
-# =============================================================================
-specifyDecimal <- function(x, k = 2, format = "f", simpleround = FALSE) {
-  if (is.null(x) || all(is.na(x))) return(as.character(x))
-  if (simpleround) {
-    round(x, k)
-  } else {
-    formatC(x, digits = k, format = format)
-  }
-}
-
 
 ##  Imports - add these to your R/zzz.R or NAMESPACE (roxygen style)
 # @import dplyr
@@ -247,115 +162,150 @@ ModelMakerMulti <- function(dat                         = dfRes,
                             name_fun          = NULL,  # <- new
                             auto_pretty       = TRUE,  # <- new
                             remove_intercept_from_results = TRUE,
-                            ncores                      = NULL) {
+                            ncores                      = NULL,
+                            sample_strategy            = c("common_per_predictor", "per_model"),
+                            glm_control                = stats::glm.control(maxit = 50)) {
+  sample_strategy <- match.arg(sample_strategy)
 
-  ## 0. Setup - outcome family & helper used inside each worker --------------
-  num_y <- length(unique(dplyr::pull(dat, outcome)))
-  family <- if (num_y == 2L) "binomial" else "gaussian"
-  if (family == "binomial") {
-    message("Assuming binomial outcome (logit GLM).")
-  } else {
-    message("Assuming gaussian outcome (identity GLM).")
+  if (!is.data.frame(dat)) stop("dat must be a data.frame")
+  if (!outcome %in% names(dat)) stop("Outcome ", outcome, " not found in dat.")
+
+  missing_vars <- setdiff(list_of_variables_of_interest, names(dat))
+  if (length(missing_vars)) {
+    warning("Variables not found in data and skipped: ", paste(missing_vars, collapse = ", "))
+    list_of_variables_of_interest <- setdiff(list_of_variables_of_interest, missing_vars)
+  }
+  if (!length(list_of_variables_of_interest)) stop("No variables available to analyse.")
+
+  found_adj <- intersect(joint_adjustment_vars, names(dat))
+  missing_adj <- setdiff(joint_adjustment_vars, names(dat))
+  if (length(missing_adj)) {
+    warning("Adjustment variables not found in data: ", paste(missing_adj, collapse = ", "))
   }
 
-  # Inner modelling routine; runs for a single predictor ----------------------
+  family <- .react_detect_outcome_family(dat[[outcome]], outcome = outcome)
+  message(
+    if (identical(family, "binomial")) "Assuming binomial outcome (logit GLM)."
+    else "Assuming gaussian outcome (identity GLM)."
+  )
+
   single_var_runner <- function(pred_name) {
+    pred_adjusters <- setdiff(found_adj, pred_name)
+    stage_specs <- vector("list", length(pred_adjusters) + 1L)
+    stage_specs[[1]] <- list(
+      stage_id = "crude",
+      adjusted_vars = character(0),
+      model = "Crude",
+      wide_col = "crude_mod_OR",
+      adjustment = 1L
+    )
+    if (length(pred_adjusters)) {
+      for (i in seq_along(pred_adjusters)) {
+        stage_specs[[i + 1L]] <- list(
+          stage_id = paste0("plus_", pred_adjusters[[i]]),
+          adjusted_vars = pred_adjusters[seq_len(i)],
+          model = paste0("+", pred_adjusters[[i]]),
+          wide_col = paste0("plus_", pred_adjusters[[i]]),
+          adjustment = i + 1L
+        )
+      }
+    }
 
-    ## Reference level: first factor level, coerced explicitly to preserve order
-    reflev <- levels(dplyr::pull(dat, !!pred_name))[1]
+    runner <- .react_run_or_stages(
+      data = dat,
+      predictor = pred_name,
+      outcome = outcome,
+      stage_specs = stage_specs,
+      sample_strategy = sample_strategy,
+      glm_control = glm_control,
+      include_intercept = TRUE
+    )
 
-    ## Call the existing sequential modeller
-    mod <- modelMakerSequential(variable_name       = pred_name,
-                                data                = dat,
-                                outcome             = outcome,
-                                sf                  = sf,
-                                format              = format,
-                                ref_level           = reflev,
-                                joint_adjustment_vars = joint_adjustment_vars)
-
-    # Tidy up names for downstream binding
-    names(mod$adj_model_outputs) <- joint_adjustment_vars
-    mod$adj_model_outputs        <- mod$adj_model_outputs[
-      c(length(mod$adj_model_outputs),
-        1:(length(mod$adj_model_outputs) - 1))]
+    plot_rows <- runner$rows
+    if (isTRUE(remove_intercept_from_results) && nrow(plot_rows)) {
+      plot_rows <- plot_rows[!plot_rows$is_intercept, , drop = FALSE]
+    }
 
     list(
-      tidy_res   = mod$model_df_predictorORs_only,
-      tidy_plot  = dplyr::bind_rows(mod$adj_model_outputs, .id = "adjustment")
+      tidy_res = .react_wide_from_long(
+        long_df = plot_rows,
+        effect_col = "OR",
+        sf = sf,
+        format = format,
+        simpleround = simpleround,
+        include_nobs = FALSE
+      ),
+      tidy_plot = plot_rows,
+      diagnostics = runner$diagnostics
     )
   }
-
-
-
-  ## 1. Run either sequentially or in parallel --------------------------------
 
   if (is.null(ncores) || ncores < 2L) {
-    # Sequential -------------------------------------------------------------
     message("Running sequentially ...")
     results <- lapply(list_of_variables_of_interest, single_var_runner)
-
   } else {
-    # Parallel via PSOCK/fork cluster ----------------------------------------
     message(sprintf("Running in parallel on %d cores ...", ncores))
-
-    cl <- parallel::makeCluster(ncores)           # fork on Unix, PSOCK on Windows
-    on.exit(parallel::stopCluster(cl), add = TRUE)
-
-    ## Export needed objects & packages to workers
-    parallel::clusterExport(
-      cl,
-      varlist = c("dat","outcome","sf","format","simpleround",
-                  "joint_adjustment_vars","modelMakerSequential",
-                  "specifyDecimal","makeORTable"),
-      envir = environment()
+    old_plan <- future::plan()
+    on.exit(try(future::plan(old_plan), silent = TRUE), add = TRUE)
+    backend <- if (isTRUE(tryCatch(future::supportsMulticore(), error = function(e) FALSE))) {
+      future::multicore
+    } else {
+      future::multisession
+    }
+    future::plan(backend, workers = ncores)
+    results <- future.apply::future_lapply(
+      list_of_variables_of_interest,
+      single_var_runner,
+      future.seed = TRUE
     )
-    parallel::clusterEvalQ(cl, {
-      library(dplyr); library(stats); library(mgcv); library(stringr); library(plyr)
-    })
-
-    results <- parallel::parLapply(cl,
-                                   X   = list_of_variables_of_interest,
-                                   fun = single_var_runner)
   }
 
+  pretty_names <- vapply(
+    list_of_variables_of_interest,
+    get_pretty_name,
+    FUN.VALUE = character(1),
+    dat = dat,
+    name_fun = name_fun,
+    auto_pretty = auto_pretty
+  )
 
-  ## --------------------------------------------------------------------------
-  ## 2. Assemble & label ------------------------------------------------------
-  ## --------------------------------------------------------------------------
+  res_list <- vector("list", length(results))
+  plot_list <- vector("list", length(results))
+  diag_list <- vector("list", length(results))
 
-  pretty_names <- vapply(list_of_variables_of_interest,
-                         get_pretty_name,
-                         FUN.VALUE = character(1),
-                         dat       = dat,
-                         name_fun  = name_fun,
-                         auto_pretty = auto_pretty)
+  for (i in seq_along(results)) {
+    res_df <- results[[i]]$tidy_res
+    if (nrow(res_df)) {
+      res_df$Variable <- pretty_names[[i]]
+      res_df <- res_df[, c("Variable", setdiff(names(res_df), "Variable")), drop = FALSE]
+    }
+    res_list[[i]] <- res_df
 
-  names(results) <- pretty_names
+    plot_df <- results[[i]]$tidy_plot
+    if (nrow(plot_df)) plot_df$Variable <- pretty_names[[i]]
+    plot_list[[i]] <- plot_df
 
-  res_list       <- lapply(results, `[[`, "tidy_res")
-  plot_res_list  <- lapply(results, `[[`, "tidy_plot")
-
-
-  out_df   <- dplyr::bind_rows(res_list,  .id = "Variable")
-  out_plot <- dplyr::bind_rows(plot_res_list, .id = "Variable")
-
-  ## Rename & clean up ---------------------------------------------------------
-  out_df   <- dplyr::rename(out_df,   Category = Level)
-  out_plot <- dplyr::rename(out_plot, Category = Level)
-
-  if (family == "gaussian") {
-    out_plot <- dplyr::rename(out_plot, Beta = OR)
-    out_df   <- dplyr::rename(out_df,   crude_mod_Beta = crude_mod_OR)
+    diag_df <- results[[i]]$diagnostics
+    if (nrow(diag_df)) diag_df$Variable <- pretty_names[[i]]
+    diag_list[[i]] <- diag_df
   }
 
-  if (remove_intercept_from_results) {
-    out_df   <- dplyr::filter(out_df,   !grepl("Intercept", Category))
-    out_plot <- dplyr::filter(out_plot, !grepl("Intercept", Category))
+  out_df <- dplyr::bind_rows(res_list)
+  out_plot <- dplyr::bind_rows(plot_list)
+  out_diag <- dplyr::bind_rows(diag_list)
+
+  if (nrow(out_df) && "Level" %in% names(out_df)) out_df <- dplyr::rename(out_df, Category = Level)
+  if (nrow(out_plot) && "Level" %in% names(out_plot)) out_plot <- dplyr::rename(out_plot, Category = Level)
+
+  if (identical(family, "gaussian")) {
+    if (nrow(out_plot) && "OR" %in% names(out_plot)) out_plot <- dplyr::rename(out_plot, Beta = OR)
+    if (nrow(out_df) && "crude_mod_OR" %in% names(out_df)) out_df <- dplyr::rename(out_df, crude_mod_Beta = crude_mod_OR)
   }
 
   list(
-    df_output   = out_df,
-    plot_output = out_plot
+    df_output = out_df,
+    plot_output = out_plot,
+    diagnostics = out_diag
   )
 }
 
@@ -497,4 +447,3 @@ GAMModelMaker <- function(variable_name, data=dfRes,
 #   rownames(tab) <- 1:nrow(tab)
 #   return(tab)
 # }
-

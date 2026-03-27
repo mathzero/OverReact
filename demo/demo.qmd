@@ -510,7 +510,7 @@ sort(list.files(demo_output_dir))
 
 ## Optional: RD-Aware Bulk Models and Automated Reports
 
-`ModelMakerMultiRD()` and `run_auto_tableone_regressions()` are included below as reference examples. They are left unevaluated here because this sandbox cannot initialise the current `data.table` OpenMP runtime cleanly, but the code shows the intended usage.
+`ModelMakerMultiRD()` and `run_auto_tableone_regressions()` are included below as reference examples. They are left unevaluated here to keep the demo fast, but the code shows the intended usage.
 
 ```{r}
 #| eval: false

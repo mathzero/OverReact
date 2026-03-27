@@ -164,7 +164,14 @@ run_auto_tableone_regressions <- function(
     if (is.null(df) || !nrow(df)) return(df)
     d <- df
     # remove reference lines if present
-    if ("Category" %in% names(d)) d <- d[!grepl("\\[reference\\]$", d$Category), , drop = FALSE]
+    if ("is_reference" %in% names(d)) {
+      d <- d[!ifelse(is.na(d$is_reference), FALSE, d$is_reference), , drop = FALSE]
+    } else if ("Category" %in% names(d)) {
+      d <- d[!grepl("\\[reference\\]$", d$Category), , drop = FALSE]
+    }
+    if ("is_intercept" %in% names(d)) {
+      d <- d[!ifelse(is.na(d$is_intercept), FALSE, d$is_intercept), , drop = FALSE]
+    }
     if (!is.na(full_adj) && "adjustment" %in% names(d)) {
       d_full <- d[is.finite(d$adjustment) & d$adjustment == full_adj, , drop = FALSE]
       if (nrow(d_full)) return(d_full)
