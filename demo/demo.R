@@ -78,7 +78,7 @@ mymods=ModelMakerMultiRD(dat = dat,
                        remove_intercept_from_results = T,
                        ncores = 1,
                        auto_pretty = T,
-                       joint_adjustment_vars = myvars[1:3],
+                       joint_adjustment_vars = myvars,
                        include_rd = F,
                        n_sim = 20)
 toc()
@@ -89,6 +89,16 @@ df_output_RDs=mymods$df_output_RDs
 
 df_output
 df_output_RDs
+
+# Forest plots -----------------------------------------------------------
+
+forest_plot_mm <- plotReactForest(
+  mymods,
+  adjustment_numbers = c(0, 1, 3),
+  adjustment_descriptions = c("Crude", "+ X1", "Full model"),
+  title = "Forest plot from ModelMakerMultiRD output"
+)
+print(forest_plot_mm)
 
 # Run non-sequential models -----------------------------------------------
 
@@ -159,46 +169,30 @@ tab1
 testmod <- glm(formula = as.formula(y_bin  ~ x1+x2+x3+x4+cat),family = "binomial",data = dat)
 makeORTable(mod = testmod,ref_level = "Case",dp = 3)
 
+forest_plot_glm <- plotReactForest(
+  testmod,
+  variables = c("x1", "cat"),
+  title = "Forest plot from a raw logistic model"
+)
+print(forest_plot_glm)
+
+testmod_lm <- lm(formula = y ~ x1 + x2 + cat, data = dat)
+forest_plot_lm <- plotReactForest(
+  testmod_lm,
+  variables = c("x1", "cat"),
+  title = "Forest plot from a raw linear model"
+)
+print(forest_plot_lm)
+
 library(tictoc)
 
 tic()
 makeRDTable(mod = testmod,variable_name = "x3",dp = 10,data = dat,n_sim = 100)
 toc()
 
-tic()
-makeRDTable_fast(mod = testmod,variable_name = "x3",dp = 10,data = dat)
-toc()
-
 
 tic()
 makeRDTable(mod = testmod,variable_name = "cat",ref_level = "Case",dp = 10,data = dat,n_sim = 100)
 toc()
-
-tic()
-makeRDTable_fast(mod = testmod,variable_name = "cat",ref_level = "Case",dp = 10,data = dat)
-toc()
-
-
-
-
-
-
-df <- data.frame(
-  res = rbinom(100, 1, .3),
-  expo = factor(sample(c("A", "B", "C"), 100, TRUE)),
-  adj  = sample(c(NA, "x"), 100, TRUE)   # many missings
-)
-
-# With no adjustment → two levels remain, RD succeeds
-modelMakerSequential(variable_name = "expo", data = df,
-                     include_rd = TRUE,outcome = "res",
-                     joint_adjustment_vars = NULL,ref_level = "A",
-                     n_sim = 100)
-
-# Include the adjustment variable → complete-case subset drops level "C",
-# RD now comes back NA
-modelMakerSequential("expo", data = df,ref_level = "A",
-                     joint_adjustment_vars = "adj",
-                     include_rd = TRUE)
 
 

@@ -1,0 +1,67 @@
+#' Return function to interpolate a new color palette
+#'
+#' @param palette Character name of palette in imperial_palettes. Choose from:
+#' \itemize{
+#'  \item default, earth, cool, warm, soft, bold, nature,
+#'  \item two_col_grey_teal, two_col_pink_purple, two_col_blue_green
+#' }
+#' @param reverse Boolean indicating whether the palette should be reversed
+#' @param ... Additional arguments to pass to colorRampPalette()
+#' @import ggplot2
+#' @import dichromat
+#' @import tinter
+
+imperial_pal <- function(palette = "default", reverse = FALSE, ...) {
+  pal <- imperial_palettes[[palette]]
+
+  if (reverse) pal <- rev(pal)
+
+  colorRampPalette(pal, ...)
+}
+
+#' Color scale constructor for new colors
+#'
+#' @param palette Character name of palette in imperial_palettes. Choose from:
+#' \itemize{
+#'  \item default, earth, cool, warm, soft, bold, nature,
+#'  \item two_col_grey_teal, two_col_pink_purple, two_col_blue_green
+#' }
+#' @param discrete Boolean indicating whether color aesthetic is discrete or not
+#' @param reverse Boolean indicating whether the palette should be reversed
+#' @param ... Additional arguments passed to ggplot2::discrete_scale() or
+#'            ggplot2::scale_color_gradientn(), used respectively when discrete is TRUE or FALSE
+#'
+scale_color_new <- function(palette = "default", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- imperial_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    ggplot2::discrete_scale("colour", palette = pal, ...)
+  } else {
+    ggplot2::scale_color_gradientn(colours = pal(256), ...)
+  }
+}
+
+#' Fill scale constructor for new colors
+#'
+#' @param palette Character name of palette in imperial_palettes. Choose from:
+#' \itemize{
+#'  \item default, earth, cool, warm, soft, bold, nature,
+#'  \item two_col_grey_teal, two_col_pink_purple, two_col_blue_green
+#' }
+#' @param discrete Boolean indicating whether color aesthetic is discrete or not
+#' @param reverse Boolean indicating whether the palette should be reversed
+#' @param ... Additional arguments passed to ggplot2::discrete_scale() or
+#'            ggplot2::scale_fill_gradientn(), used respectively when discrete is TRUE or FALSE
+#'
+scale_fill_new <- function(palette = "default", discrete = TRUE, reverse = FALSE, ...) {
+  pal <- imperial_pal(palette = palette, reverse = reverse)
+
+  if (discrete) {
+    ggplot2::discrete_scale("fill", palette = pal, ...)
+  } else {
+    ggplot2::scale_fill_gradientn(colours = pal(256), ...)
+  }
+}
+
+scale_fill_imperial <- scale_fill_new
+scale_color_imperial <- scale_color_new

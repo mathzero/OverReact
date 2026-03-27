@@ -1,0 +1,548 @@
+---
+title: "OverReact Demo"
+format:
+  html:
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+This notebook demonstrates the main workflow in `OverReact`: cleaning inputs, building descriptive tables, estimating prevalence, fitting regression models, drawing forest plots, applying the package themes, and exporting outputs.
+
+## Setup
+
+```{r}
+knitr::opts_chunk$set(fig.width = 8, fig.height = 4.8)
+
+library(dplyr)
+library(ggplot2)
+
+repo_root <- normalizePath(
+  if (basename(getwd()) == "demo") ".." else ".",
+  winslash = "/",
+  mustWork = TRUE
+)
+
+if (requireNamespace("pkgload", quietly = TRUE)) {
+  pkgload::load_all(repo_root, quiet = TRUE)
+} else {
+  r_files <- list.files(file.path(repo_root, "R"), pattern = "\\.R$", full.names = TRUE)
+  invisible(lapply(r_files, source))
+}
+
+set.seed(123)
+```
+
+## Simulated Analysis Dataset
+
+```{r}
+n <- 1000
+
+dat <- tibble::tibble(
+  age_years = round(rnorm(n, mean = 50, sd = 15)),
+  sex = factor(sample(c("Female", "Male"), n, replace = TRUE)),
+  region = factor(sample(c("North", "Midlands", "South"), n, replace = TRUE, prob = c(0.30, 0.30, 0.40))),
+  ethnicity = factor(sample(c("White", "Asian", "Black", "Mixed"), n, replace = TRUE, prob = c(0.70, 0.12, 0.10, 0.08))),
+  deprivation = factor(sample(paste0("Q", 1:5), n, replace = TRUE), levels = paste0("Q", 1:5)),
+  household_size = sample(1:6, n, replace = TRUE, prob = c(0.18, 0.28, 0.20, 0.17, 0.10, 0.07)),
+  exercise_days = pmax(0, pmin(7, round(rnorm(n, mean = 3.5, sd = 1.8)))),
+  occupation_group = factor(sample(c("Office", "Service", "Manual"), n, replace = TRUE, prob = c(0.45, 0.30, 0.25))),
+  smoking_status = factor(sample(c("Never", "Former", "Current"), n, replace = TRUE, prob = c(0.55, 0.25, 0.20))),
+  exposure_primary = rnorm(n),
+  bmi = rnorm(n, mean = 27, sd = 4),
+  survey_weight = runif(n, min = 0.7, max = 1.5),
+  sample_date_chr = format(as.Date("2022-01-01") + sample(0:120, n, replace = TRUE), "%d/%m/%Y"),
+  binary_1_2 = sample(c(1, 2), n, replace = TRUE, prob = c(0.25, 0.75)),
+  binary_1_0 = sample(c(0, 1), n, replace = TRUE, prob = c(0.70, 0.30)),
+  continuous_dirty = ifelse(runif(n) < 0.03, -1, rnorm(n, mean = 10, sd = 3))
+)
+
+linpred <- -1.1 +
+  0.55 * dat$exposure_primary +
+  0.03 * (dat$age_years - 50) +
+  0.35 * (dat$sex == "Male") +
+  0.45 * (dat$smoking_status == "Current") +
+  0.25 * (dat$region == "North")
+
+dat$outcome_bin <- rbinom(n, size = 1, prob = plogis(linpred))
+dat$outcome_group <- factor(dat$outcome_bin, levels = c(0, 1), labels = c("Negative", "Positive"))
+dat$outcome_cont <- 2 + 0.8 * dat$exposure_primary - 0.15 * (dat$sex == "Male") + rnorm(n)
+dat$res <- as.character(dat$outcome_bin)
+dat$predicted_flag <- as.integer(dat$exposure_primary + rnorm(n, sd = 0.8) > 0.6)
+
+dat$region[sample(seq_len(n), 15)] <- NA
+dat$smoking_status[sample(seq_len(n), 20)] <- NA
+
+attr(dat$exposure_primary, "label") <- "Primary exposure score"
+attr(dat$smoking_status, "label") <- "Smoking status"
+
+cov_name_list <- list(
+  sex = "Sex",
+  smoking_status = "Smoking status",
+  region = "Region",
+  age_years = "Age (years)",
+  bmi = "Body mass index",
+  ethnicity = "Ethnicity",
+  deprivation = "Deprivation quintile",
+  household_size = "Household size",
+  exercise_days = "Exercise days per week",
+  occupation_group = "Occupation group"
+)
+
+adjusters <- c(
+  "age_years",
+  "sex",
+  "region",
+  "ethnicity",
+  "deprivation",
+  "household_size",
+  "exercise_days",
+  "occupation_group"
+)
+
+dat |>
+  dplyr::select(outcome_group, age_years, sex, region, smoking_status, exposure_primary, bmi) |>
+  head(8) |>
+  knitr::kable()
+```
+
+## Cleaning Helpers
+
+`reactCleaner()`, `binaryCleaner()`, `binaryCleaner_1_0()`, `continuousCleaner()`, `dateCleaner()`, and `checkConvertNumeric()` are intended for quick preprocessing before tabulation or modelling.
+
+```{r}
+cleaning_preview <- tibble::tibble(
+  raw_binary_1_2 = dat$binary_1_2[1:8],
+  binaryCleaner = binaryCleaner(dat$binary_1_2[1:8]),
+  raw_binary_1_0 = dat$binary_1_0[1:8],
+  binaryCleaner_1_0 = binaryCleaner_1_0(dat$binary_1_0[1:8]),
+  raw_continuous = round(dat$continuous_dirty[1:8], 2),
+  continuousCleaner = continuousCleaner(dat$continuous_dirty[1:8], floornumber = 0),
+  reactCleaner_binary = reactCleaner(dat$binary_1_0[1:8], datatype = "binary", negval = 0, posval = 1)
+)
+
+cleaning_preview |>
+  knitr::kable()
+```
+
+```{r}
+date_preview <- tibble::tibble(
+  raw_date = dat$sample_date_chr[1:8],
+  dateCleaner = as.character(dateCleaner(dat$sample_date_chr[1:8], dateFormat = "%d/%m/%Y")),
+  reactCleaner_date = reactCleaner(
+    dat$sample_date_chr[1:8],
+    datatype = "date",
+    dateFormat = "%d/%m/%Y"
+  )
+)
+
+date_preview |>
+  knitr::kable()
+```
+
+```{r}
+numeric_conversion_demo <- tibble::tibble(
+  char_numeric = c("1", "2", NA, "4"),
+  char_text = c("low", "medium", "high", "missing")
+)
+
+checkConvertNumeric(numeric_conversion_demo) |>
+  knitr::kable()
+```
+
+## Cross Tabs and Table One
+
+```{r}
+smoking_by_sex <- crossTab(
+  dat = dat,
+  rowvar = "smoking_status",
+  colvar = "sex",
+  confint = FALSE,
+  include_percentages = TRUE
+)
+
+smoking_by_sex |>
+  knitr::kable()
+```
+
+```{r}
+bmi_by_sex <- crossTabContinuous(
+  dat = dat,
+  rowvar = "bmi",
+  colvar = "sex",
+  summary_stat = "mean"
+)
+
+bmi_by_sex |>
+  knitr::kable()
+```
+
+```{r}
+multi_xtab <- crossTabMulti(
+  dat = dat,
+  rowvars = c("smoking_status", "bmi"),
+  colvar = "sex",
+  summary_stat = "mean",
+  include_percentages = TRUE
+)
+
+multi_xtab |>
+  knitr::kable()
+```
+
+```{r}
+table_one <- tableOne(
+  dat = dat,
+  rowvars = c("age_years", "bmi", "smoking_status", "region"),
+  colvar = "outcome_group",
+  cov_names = cov_name_list,
+  summary_stat = "mean",
+  include_percentages = TRUE,
+  statistical_test = TRUE
+)
+
+table_one |>
+  head(10) |>
+  knitr::kable()
+```
+
+## Prevalence Tables
+
+```{r}
+prevalence_tables <- makeTablesNew(
+  dat = dat,
+  result_var = "res",
+  covariates = c("sex", "smoking_status", "region"),
+  cov_name_list = cov_name_list,
+  output_list = FALSE,
+  percent = TRUE
+)
+
+prevalence_tables |>
+  knitr::kable()
+```
+
+```{r}
+stratified_prevalence <- stratifiedTables(
+  dat = dat,
+  result_var = "res",
+  covariates = c("smoking_status"),
+  cov_name_list = cov_name_list,
+  strat_var = "sex",
+  include_counts = TRUE
+)
+
+stratified_prevalence |>
+  knitr::kable()
+```
+
+## Formatting and Epidemiology Utilities
+
+```{r}
+formatting_demo <- tibble::tibble(
+  raw_value = c(pi, exp(1), 0.00042),
+  specifyDecimal = specifyDecimal(c(pi, exp(1), 0.00042), k = 3),
+  pValEpiConverter = pValEpiConverter(c(0.20, 0.02, 0.0001)),
+  pvalAsterisker = pvalAsterisker(c(0.20, 0.02, 0.0001), return_p = TRUE)
+)
+
+formatting_demo |>
+  knitr::kable()
+```
+
+```{r}
+calculateEpiStats(
+  prediction = dat$predicted_flag,
+  outcome = dat$outcome_bin,
+  returnAllStats = TRUE
+)
+```
+
+## Individual Models and Effect Tables
+
+```{r}
+fit_glm <- glm(
+  outcome_bin ~ exposure_primary + smoking_status + age_years + sex,
+  data = dat,
+  family = binomial()
+)
+
+fit_lm <- lm(
+  outcome_cont ~ exposure_primary + smoking_status + age_years + sex,
+  data = dat
+)
+
+or_table <- makeORTable(fit_glm)
+rd_table <- makeRDTable(
+  mod = fit_glm,
+  variable_name = "smoking_status",
+  ref_level = levels(dat$smoking_status)[1],
+  dp = 3,
+  data = dat,
+  n_sim = 20
+)
+
+or_table |>
+  knitr::kable()
+```
+
+```{r}
+rd_table |>
+  knitr::kable()
+```
+
+`plotReactForest()` accepts raw models, model lists, tidy plotting data frames, and `ModelMaker*` outputs.
+
+```{r}
+plotReactForest(
+  fit_glm,
+  variables = c("exposure_primary", "smoking_status"),
+  title = "Forest plot from a logistic model"
+)
+```
+
+```{r}
+plotReactForest(
+  fit_lm,
+  variables = c("exposure_primary", "smoking_status"),
+  title = "Forest plot from a linear model"
+)
+```
+
+```{r}
+rd_plot_data <- rd_table |>
+  dplyr::mutate(
+    Variable = "Smoking status",
+    Category = Level
+  )
+
+plotReactForest(
+  rd_plot_data,
+  effect = "RD",
+  variables = "Smoking status",
+  title = "Risk-difference forest plot"
+)
+```
+
+## Bulk Odds-Ratio Models
+
+`ModelMakerMulti()` is the main batch OR/Beta workflow that does not rely on the RD-specific `data.table` path.
+
+```{r}
+multi_or <- suppressMessages(
+  ModelMakerMulti(
+    dat = dat,
+    list_of_variables_of_interest = c("exposure_primary", "smoking_status", "bmi"),
+    outcome = "outcome_bin",
+    joint_adjustment_vars = c("age_years", "sex", "region"),
+    ncores = 1
+  )
+)
+
+multi_or$df_output |>
+  head(10) |>
+  knitr::kable()
+```
+
+```{r}
+plotReactForest(
+  multi_or,
+  variables = c("Primary exposure score", "Smoking status"),
+  adjustment_numbers = c("1", "2", "3", "4"),
+  adjustment_descriptions = c(
+    "Crude",
+    "Level 1: + age",
+    "Level 2: + age + sex",
+    "Level 3: + age + sex + region"
+  ),
+  title = "Forest plot from ModelMakerMulti()"
+)
+```
+
+## Forest Plots with 1 to 8 Adjustment Levels
+
+The next helper builds model lists with exactly 1 through 8 plotted adjustment levels. This is the simplest way to demonstrate the full `plotReactForest()` API over a controlled range of adjustment counts.
+
+```{r}
+level_labels <- c(
+  "Level 1: + age",
+  "Level 2: + age + sex",
+  "Level 3: + age + sex + region",
+  "Level 4: + age + sex + region + ethnicity",
+  "Level 5: + age + sex + region + ethnicity + deprivation",
+  "Level 6: + age + sex + region + ethnicity + deprivation + household size",
+  "Level 7: + age + sex + region + ethnicity + deprivation + household size + exercise days",
+  "Level 8: full model"
+)
+
+make_adjustment_model_list <- function(k) {
+  model_list <- vector("list", length = k)
+
+  for (i in seq_len(k)) {
+    rhs <- c("exposure_primary", "smoking_status", adjusters[seq_len(i)])
+    model_list[[i]] <- glm(
+      reformulate(rhs, response = "outcome_bin"),
+      data = dat,
+      family = binomial()
+    )
+  }
+
+  names(model_list) <- paste0("adj_", seq_len(k))
+  model_list
+}
+
+forest_plots_1_to_8 <- lapply(1:8, function(k) {
+  plotReactForest(
+    make_adjustment_model_list(k),
+    variables = c("exposure_primary", "smoking_status"),
+    adjustment_numbers = as.character(0:(k - 1)),
+    adjustment_descriptions = level_labels[seq_len(k)],
+    title = paste("Forest plot with", k, if (k == 1) "adjustment level" else "adjustment levels")
+  )
+})
+
+for (p in forest_plots_1_to_8) {
+  print(p)
+}
+```
+
+## Themes, Palettes, and Scales
+
+```{r}
+palette_values <- tibble::tibble(
+  palette_index = seq_len(5),
+  hex = imperial_pal_discrete("default")(5)
+)
+
+palette_values |>
+  knitr::kable()
+```
+
+```{r}
+ggplot(dat, aes(x = sex, y = exposure_primary, fill = sex)) +
+  geom_boxplot(width = 0.65) +
+  scale_fill_new(palette = "cool") +
+  theme_react() +
+  labs(
+    title = "theme_react() with scale_fill_new()",
+    x = NULL,
+    y = "Primary exposure score"
+  )
+```
+
+```{r}
+ggplot(dat, aes(x = age_years, y = outcome_cont, color = smoking_status)) +
+  geom_point(alpha = 0.45) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.7) +
+  scale_color_new(palette = "warm") +
+  theme_mw() +
+  labs(
+    title = "theme_mw() with scale_color_new()",
+    x = "Age (years)",
+    y = "Continuous outcome"
+  )
+```
+
+## Export Helpers
+
+The save helpers below write to `tempdir()` so the demo remains self-contained and does not modify the repository.
+
+```{r}
+demo_output_dir <- file.path(tempdir(), "overreact-demo")
+dir.create(demo_output_dir, recursive = TRUE, showWarnings = FALSE)
+
+prevalence_plot <- ggplot(prevalence_tables, aes(x = Category, y = Prevalence, fill = Variable)) +
+  geom_col(position = position_dodge(width = 0.8)) +
+  geom_errorbar(
+    aes(ymin = Lower, ymax = Upper),
+    width = 0.2,
+    position = position_dodge(width = 0.8)
+  ) +
+  scale_fill_new(palette = "default") +
+  theme_react() +
+  labs(
+    title = "Prevalence estimates by category",
+    x = NULL,
+    y = "Prevalence (%)"
+  ) +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1))
+
+prevalence_plot
+```
+
+```{r}
+saveREACTplot(
+  p = prevalence_plot,
+  figpath = demo_output_dir,
+  filename = "prevalence_plot",
+  width = 7,
+  height = 4.5,
+  savePDF = FALSE
+)
+
+saveREACTtable(
+  tab = prevalence_tables,
+  outpath = paste0(demo_output_dir, "/"),
+  filename = "prevalence_table",
+  save_rds = TRUE
+)
+
+saveREACT(
+  file = prevalence_tables,
+  figpath = demo_output_dir,
+  outpath = paste0(demo_output_dir, "/"),
+  filename = "prevalence_table_generic"
+)
+
+savePrettyExcelWorkbook(
+  listOfTables = list(
+    table_one = table_one,
+    prevalence = prevalence_tables
+  ),
+  workbookName = "overreact_demo_tables",
+  outpath = paste0(demo_output_dir, "/")
+)
+
+sort(list.files(demo_output_dir))
+```
+
+## Optional: RD-Aware Bulk Models and Automated Reports
+
+`ModelMakerMultiRD()` and `run_auto_tableone_regressions()` are included below as reference examples. They are left unevaluated here because this sandbox cannot initialise the current `data.table` OpenMP runtime cleanly, but the code shows the intended usage.
+
+```{r}
+#| eval: false
+multi_rd <- ModelMakerMultiRD(
+  dat = dat,
+  list_of_variables_of_interest = c("exposure_primary", "smoking_status", "bmi"),
+  outcome = "outcome_bin",
+  joint_adjustment_vars = adjusters,
+  incremental = TRUE,
+  include_crude = TRUE,
+  include_rd = TRUE,
+  n_sim = 100,
+  ncores = 1
+)
+
+plotReactForest(
+  multi_rd,
+  variables = c("exposure_primary", "smoking_status"),
+  adjustment_numbers = c("0", as.character(seq_along(level_labels))),
+  adjustment_descriptions = c("Crude", level_labels),
+  title = "Forest plot from ModelMakerMultiRD()"
+)
+
+auto_results <- run_auto_tableone_regressions(
+  dat = dat,
+  outcome = "outcome_bin",
+  covariates = adjusters,
+  independent_variables = c("exposure_primary", "smoking_status", "bmi"),
+  cov_names = cov_name_list,
+  report_path = file.path(demo_output_dir, "auto_summary.md"),
+  n_sim = 100
+)
+
+names(auto_results)
+```

@@ -1,0 +1,7 @@
+GAMModelMaker           Legacy and Utility Helpers
+imperial_pal            Return function to interpolate a new color
+                        palette
+makeTablesNew           Create prevalence tables
+scale_color_new         Color scale constructor for new colors
+scale_fill_new          Fill scale constructor for new colors
+specifyDecimal          Format numeric values with fixed decimals
