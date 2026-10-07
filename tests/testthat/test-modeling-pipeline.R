@@ -55,6 +55,34 @@ test_that("ModelMakerMulti keeps predictor rows and categorical levels", {
   expect_false(any(res_drop$plot_output$is_intercept, na.rm = TRUE))
 })
 
+test_that("ModelMakerMulti preserves self-adjustment stages and numbering", {
+  dat <- make_model_test_data(n = 500)
+
+  res <- suppressMessages(
+    ModelMakerMulti(
+      dat = dat,
+      list_of_variables_of_interest = "x1",
+      outcome = "y_bin",
+      joint_adjustment_vars = c("x1", "x2"),
+      ncores = 1,
+      remove_intercept_from_results = TRUE
+    )
+  )
+
+  x1_row <- res$df_output[res$df_output$Variable == "X1", , drop = FALSE]
+  x1_plot <- res$plot_output[res$plot_output$Variable == "X1", , drop = FALSE]
+
+  expect_equal(x1_row$Category, "x1")
+  expect_false(is.na(x1_row$plus_x1))
+  expect_equal(x1_row$plus_x1, x1_row$crude_mod_OR)
+  expect_equal(x1_plot$stage_id, c("crude", "plus_x1", "plus_x2"))
+  expect_equal(x1_plot$adjustment, c(1L, 2L, 3L))
+  expect_equal(
+    x1_plot$OR[x1_plot$stage_id == "plus_x1"],
+    x1_plot$OR[x1_plot$stage_id == "crude"]
+  )
+})
+
 test_that("binary outcomes with missing values stay binomial", {
   dat <- make_model_test_data()
   dat$y_bin[sample(seq_len(nrow(dat)), 25)] <- NA

@@ -46,6 +46,39 @@
   out
 }
 
+.react_build_sequential_stage_specs <- function(adjusters,
+                                                predictor,
+                                                crude_adjustment = 1L,
+                                                crude_wide_col = "crude_mod_OR") {
+  stage_specs <- vector("list", length(adjusters) + 1L)
+  stage_specs[[1]] <- list(
+    stage_id = "crude",
+    adjusted_vars = character(0),
+    model = "Crude",
+    wide_col = crude_wide_col,
+    adjustment = crude_adjustment
+  )
+
+  if (!length(adjusters)) {
+    return(stage_specs)
+  }
+
+  for (i in seq_along(adjusters)) {
+    cumulative_adjusters <- adjusters[seq_len(i)]
+    cumulative_adjusters <- cumulative_adjusters[cumulative_adjusters != predictor]
+
+    stage_specs[[i + 1L]] <- list(
+      stage_id = paste0("plus_", adjusters[[i]]),
+      adjusted_vars = cumulative_adjusters,
+      model = paste0("+", adjusters[[i]]),
+      wide_col = paste0("plus_", adjusters[[i]]),
+      adjustment = crude_adjustment + i
+    )
+  }
+
+  stage_specs
+}
+
 .react_reference_level <- function(x, ref_level = NULL) {
   if (!is.factor(x) || is.ordered(x)) return(NULL)
   lvls <- levels(x)

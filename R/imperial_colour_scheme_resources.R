@@ -41,13 +41,25 @@ imperial_cols <- function(...) {
 imperial_palettes <- list(
   `default` = imperial_cols(
     "Imperial_Blue",
-    "Slate_Gray",
+    "Deep_Sky_Blue",
     "Orange_Red",
+    "Teal",
+    "Slate_Gray",
     "Orange",
+    "Dark_Green",
+    "Dark"
+  ),
+
+  `gradient` = imperial_cols(
+    "Navy_Blue",
+    "Imperial_Blue",
+    "Deep_Sky_Blue",
+    "Slate_Gray",
     "Teal",
     "Dark_Green",
-    "Deep_Sky_Blue",
-    "Dark"
+    "Dark",
+    "Crimson",
+    "Orange"
   ),
 
   `earth` = imperial_cols(

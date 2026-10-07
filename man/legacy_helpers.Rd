@@ -45,9 +45,6 @@
 \alias{scale_color_imperial}
 \alias{scale_fill_imperial}
 \alias{stratifiedTables}
-\alias{tableCat}
-\alias{tableCont}
-\alias{tableOne}
 \alias{theme_mw}
 \alias{theme_react}
 \alias{validate_factor_levels}

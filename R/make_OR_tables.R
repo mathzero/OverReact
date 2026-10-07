@@ -36,27 +36,12 @@ modelMakerSequential <- function(variable_name, data = dfRes, sf = 2, format = "
   if (length(missing_adj)) {
     warning("Adjustment variables not found in data: ", paste(missing_adj, collapse = ", "))
   }
-  found_adj <- setdiff(found_adj, variable_name)
-
-  stage_specs <- vector("list", length(found_adj) + 1L)
-  stage_specs[[1]] <- list(
-    stage_id = "crude",
-    adjusted_vars = character(0),
-    model = "Crude",
-    wide_col = "crude_mod_OR",
-    adjustment = 1L
+  stage_specs <- .react_build_sequential_stage_specs(
+    adjusters = found_adj,
+    predictor = variable_name,
+    crude_adjustment = 1L,
+    crude_wide_col = "crude_mod_OR"
   )
-  if (length(found_adj)) {
-    for (i in seq_along(found_adj)) {
-      stage_specs[[i + 1L]] <- list(
-        stage_id = paste0("plus_", found_adj[[i]]),
-        adjusted_vars = found_adj[seq_len(i)],
-        model = paste0("+", found_adj[[i]]),
-        wide_col = paste0("plus_", found_adj[[i]]),
-        adjustment = i + 1L
-      )
-    }
-  }
 
   runner <- .react_run_or_stages(
     data = data,
@@ -190,26 +175,12 @@ ModelMakerMulti <- function(dat                         = dfRes,
   )
 
   single_var_runner <- function(pred_name) {
-    pred_adjusters <- setdiff(found_adj, pred_name)
-    stage_specs <- vector("list", length(pred_adjusters) + 1L)
-    stage_specs[[1]] <- list(
-      stage_id = "crude",
-      adjusted_vars = character(0),
-      model = "Crude",
-      wide_col = "crude_mod_OR",
-      adjustment = 1L
+    stage_specs <- .react_build_sequential_stage_specs(
+      adjusters = found_adj,
+      predictor = pred_name,
+      crude_adjustment = 1L,
+      crude_wide_col = "crude_mod_OR"
     )
-    if (length(pred_adjusters)) {
-      for (i in seq_along(pred_adjusters)) {
-        stage_specs[[i + 1L]] <- list(
-          stage_id = paste0("plus_", pred_adjusters[[i]]),
-          adjusted_vars = pred_adjusters[seq_len(i)],
-          model = paste0("+", pred_adjusters[[i]]),
-          wide_col = paste0("plus_", pred_adjusters[[i]]),
-          adjustment = i + 1L
-        )
-      }
-    }
 
     runner <- .react_run_or_stages(
       data = dat,

@@ -701,6 +701,7 @@ plotReactForest <- function(univ_df_plot,
       data = panel_stripes,
       ggplot2::aes(x = Category_key, y = null_value, height = Inf, fill = stripe_col),
       inherit.aes = FALSE,
+      width = 1,
       alpha = alpha_val,
       colour = if (isTRUE(strip_borders)) "grey70" else NA,
       linetype = "dashed",
@@ -732,7 +733,10 @@ plotReactForest <- function(univ_df_plot,
       shrink = TRUE,
       drop = TRUE
     ) +
-    ggplot2::scale_x_discrete(labels = label_map) +
+    ggplot2::scale_x_discrete(
+      labels = label_map,
+      expand = ggplot2::expansion(add = 0)
+    ) +
     ggplot2::labs(
       x = "",
       y = xlab,
