@@ -76,7 +76,7 @@ test_that("ModelMakerMulti preserves self-adjustment stages and numbering", {
   expect_false(is.na(x1_row$plus_x1))
   expect_equal(x1_row$plus_x1, x1_row$crude_mod_OR)
   expect_equal(x1_plot$stage_id, c("crude", "plus_x1", "plus_x2"))
-  expect_equal(x1_plot$adjustment, c(1L, 2L, 3L))
+  expect_equal(x1_plot$adjustment, c(0L, 1L, 2L))
   expect_equal(
     x1_plot$OR[x1_plot$stage_id == "plus_x1"],
     x1_plot$OR[x1_plot$stage_id == "crude"]
@@ -157,7 +157,7 @@ test_that("legacy and RD wrappers agree on OR outputs when RD is disabled", {
     )
   )$plot_output
 
-  legacy$adj_index <- legacy$adjustment - 1L
+  legacy$adj_index <- legacy$adjustment
   rd$adj_index <- rd$adjustment
 
   cols <- c("Variable", "Category", "adj_index", "OR", "Lower", "Upper", "P_value")
@@ -256,4 +256,152 @@ test_that("ModelMakerMulti parallel and sequential outputs match", {
 
   expect_equal(seq_res$df_output, par_res$df_output)
   expect_equal(seq_res$plot_output, par_res$plot_output, tolerance = 1e-8)
+})
+
+test_that("the automated report keeps predictors that are also covariates", {
+  dat <- make_model_test_data(n = 600)
+  res <- suppressMessages(
+    run_auto_tableone_regressions(
+      dat = dat,
+      outcome = "y_bin",
+      covariates = c("x1", "x2"),
+      independent_variables = c("x1", "x2", "x3", "cat"),
+      include_rd = FALSE,
+      ncores = 1
+    )
+  )
+
+  bullets <- grep("^- \\*\\*", strsplit(res$report_markdown, "\n")[[1]], value = TRUE)
+  expect_length(bullets, 4)
+  # x1 is never adjusted for itself, so its most-adjusted model is the one with x2 only.
+  expect_match(grep("^- \\*\\*X1\\*\\*", bullets, value = TRUE), "\\[x2\\]$")
+})
+
+test_that("numeric outputs keep full precision", {
+  set.seed(3)
+  dat <- data.frame(income = runif(2000, 10000, 90000), z = rnorm(2000))
+  dat$y <- rbinom(2000, 1, plogis(-1 + 2e-5 * (dat$income - 50000)))
+
+  res <- suppressMessages(
+    ModelMakerMultiRD(dat, "income", outcome = "y", joint_adjustment_vars = "z",
+                      include_rd = FALSE, ncores = 1)
+  )
+  fit <- glm(y ~ income + z, family = binomial, data = dat)
+  adjusted <- res$plot_output[res$plot_output$adjustment == 1, , drop = FALSE]
+
+  expect_equal(adjusted$OR, exp(coef(fit)[["income"]]))
+  expect_equal(adjusted$P_value, summary(fit)$coefficients["income", "Pr(>|z|)"])
+  expect_true(adjusted$Lower < adjusted$OR && adjusted$OR < adjusted$Upper)
+})
+
+test_that("checkpoints are reused only for the same specification and data", {
+  dat <- make_model_test_data(n = 400)
+  savepath <- withr::local_tempdir()
+  run <- function(adjusters, data = dat) {
+    ModelMakerMultiRD(dat = data, list_of_variables_of_interest = "cat", outcome = "y_bin",
+                      joint_adjustment_vars = adjusters, include_rd = FALSE, ncores = 1,
+                      savepath = savepath)
+  }
+
+  suppressMessages(run("x2"))
+  messages <- capture_messages(changed_spec <- run(c("x2", "x3")))
+  expect_true(any(grepl("different specification or data", messages)))
+  expect_true("adj_x2+x3_OR" %in% names(changed_spec$df_output))
+
+  messages <- capture_messages(reused <- run(c("x2", "x3")))
+  expect_true(any(grepl("Skipping already-completed variables: cat", messages)))
+  expect_equal(reused$df_output, changed_spec$df_output)
+
+  changed_data <- dat
+  changed_data$y_bin[1:20] <- 1 - changed_data$y_bin[1:20]
+  messages <- capture_messages(run(c("x2", "x3"), data = changed_data))
+  expect_true(any(grepl("different specification or data", messages)))
+})
+
+test_that("per-model samples keep one reference level and one row per level", {
+  set.seed(11)
+  n <- 800
+  dat <- data.frame(y = rbinom(n, 1, 0.4), z = rnorm(n))
+  dat$g <- factor(sample(c("a", "b", "c"), n, TRUE))
+  run <- function(adjuster) {
+    suppressMessages(
+      ModelMakerMultiRD(dat, "g", outcome = "y", joint_adjustment_vars = adjuster,
+                        include_rd = FALSE, ncores = 1, sample_strategy = "per_model")
+    )
+  }
+
+  # The adjusted sample has no reference-level rows: report a failed stage, not a new reference.
+  dat$w <- dat$z
+  dat$w[dat$g == "a"] <- NA
+  lost_reference <- run("w")
+  expect_equal(lost_reference$df_output$Category, c("a [reference]", "b", "c"))
+  expect_false(any(lost_reference$plot_output$Category == "b [reference]"))
+  stage_w <- lost_reference$diagnostics[lost_reference$diagnostics$stage == "w", , drop = FALSE]
+  expect_true(all(stage_w$status == "error"))
+  expect_match(stage_w$error_msg[1], "Reference level 'a'")
+
+  # A non-reference level drops out: its row stays in place with no adjusted estimate.
+  dat$w2 <- dat$z
+  dat$w2[dat$g == "b"] <- NA
+  lost_level <- run("w2")
+  expect_equal(lost_level$df_output$Category, c("a [reference]", "b", "c"))
+  expect_equal(lost_level$df_output$adj_w2_OR[2], "-")
+})
+
+test_that("a supplied reference level is used for estimation, not just labelling", {
+  dat <- make_model_test_data(n = 600)
+  default <- modelMakerAdjustedSetsRD("cat", data = dat, outcome = "y_bin",
+                                      adj_sets = list(a = "x2"))$crude_model_OR
+  control <- modelMakerAdjustedSetsRD("cat", data = dat, outcome = "y_bin", ref_level = "Control",
+                                      adj_sets = list(a = "x2"))$crude_model_OR
+
+  expect_equal(control$Level[!control$is_intercept], c("Control [reference]", "Case"))
+  expect_equal(control$OR[control$Level == "Case"],
+               1 / default$OR[default$Level == "Control"], tolerance = 1e-6)
+})
+
+test_that("checkpoints never return an earlier run's table, and CSV copies restore tables exactly", {
+  dat <- make_model_test_data(n = 400)
+  dat$y_cont <- rnorm(nrow(dat))
+  savepath <- withr::local_tempdir()
+  run <- function(outcome) {
+    suppressMessages(
+      ModelMakerMultiRD(dat, "cat", outcome = outcome, joint_adjustment_vars = "x2",
+                        include_rd = TRUE, include_rr = TRUE, ncores = 1, savepath = savepath)
+    )
+  }
+
+  binary <- run("y_bin")
+  # Gaussian outcomes have no RD or RR tables, on the first run or when reusing it.
+  expect_null(run("y_cont")$df_output_RDs)
+  reused <- run("y_cont")
+  expect_null(reused$df_output_RDs)
+  expect_null(reused$df_output_RRs)
+
+  binary <- run("y_bin")
+  unlink(file.path(savepath, "runs", "cat", "plot_rr.rds"))
+  restored <- run("y_bin")
+  expect_equal(restored$plot_output_RRs, binary$plot_output_RRs)
+  expect_equal(restored$plot_output, binary$plot_output)
+})
+
+test_that("a predictor that is also an adjuster keeps the shared stage numbers", {
+  dat <- make_model_test_data(n = 800)
+  res <- suppressMessages(
+    ModelMakerMultiRD(dat, c("x1", "x2"), outcome = "y_bin", joint_adjustment_vars = c("x2", "x3"),
+                      include_rd = TRUE, ncores = 1)
+  )
+  stages <- function(plot, var) sort(unique(plot$adjustment[plot$Variable == var]))
+  expect_equal(stages(res$plot_output, "X1"), 0:2)
+  # x2 is never adjusted for itself: its stages are crude and x3 (stage 2, fully adjusted).
+  expect_equal(stages(res$plot_output, "X2"), c(0, 2))
+  expect_equal(stages(res$plot_output_RDs, "X2"), c(0, 2))
+
+  # Each predictor's fully adjusted model shares a stage, and so a q-value family.
+  full <- res$plot_output[res$plot_output$adjustment == 2 & !res$plot_output$is_reference, ]
+  expect_setequal(full$Variable, c("X1", "X2"))
+  expect_equal(full$Q_value, p.adjust(full$P_value, "BH"))
+  forest <- plotReactForest(res, adjustment_numbers = c(0, 2))
+  expect_setequal(as.character(unique(forest$data$Variable[forest$data$adjustment == "2"])),
+                  c("X1", "X2"))
 })

@@ -67,7 +67,7 @@ plotReactVIF <- function(vif_df,
                        space  = "free",
                        shrink = TRUE,
                        drop   = TRUE) +
-    OverReact::theme_react(strip_text_size = strip_text_size) +
+    theme_react(strip_text_size = strip_text_size) +
     ggplot2::labs(x     = "Number of covariates in model",
                   y     = "Variance inflation factor",
                   colour = "") +
@@ -109,12 +109,27 @@ plotReactVIF <- function(vif_df,
 }
 
 
-.react_detect_effect <- function(df, effect = c("auto", "OR", "Beta", "RD")) {
+# Text for the forest plot's estimate column, keyed by row: "estimate (lower, upper),
+# p=..., N=..." for rows with an estimate, blank for reference rows.
+.react_forest_estimate_labels <- function(rows, digits = 2) {
+  fixed <- function(x) formatC(x, format = "f", digits = digits)
+  p_text <- ifelse(is.na(rows$P_value), "",
+                   ifelse(rows$P_value < 0.001, ", p<0.001", paste0(", p=", formatC(rows$P_value, format = "f", digits = 3))))
+  n_text <- if ("Nobs_in_model" %in% names(rows)) {
+    ifelse(is.na(rows$Nobs_in_model), "", paste0(", N=", formatC(rows$Nobs_in_model, format = "d", big.mark = ",")))
+  } else ""
+  text <- paste0(fixed(rows$effect_value), " (", fixed(rows$Lower), ", ", fixed(rows$Upper), ")", p_text, n_text)
+  text[is.na(rows$effect_value)] <- ""
+  stats::setNames(text, as.character(rows$Category_key))
+}
+
+
+.react_detect_effect <- function(df, effect = c("auto", "OR", "RR", "IRR", "Beta", "RD")) {
   effect <- match.arg(effect)
-  available <- intersect(c("OR", "Beta", "RD"), names(df))
+  available <- intersect(c("OR", "RR", "IRR", "Beta", "RD"), names(df))
 
   if (!length(available)) {
-    stop("Could not find an effect column. Expected one of: OR, Beta, RD.")
+    stop("Could not find an effect column. Expected one of: OR, RR, IRR, Beta, RD.")
   }
 
   if (effect != "auto") {
@@ -124,13 +139,7 @@ plotReactVIF <- function(vif_df,
     return(effect)
   }
 
-  if ("OR" %in% available) {
-    return("OR")
-  }
-  if ("Beta" %in% available) {
-    return("Beta")
-  }
-  "RD"
+  available[[1]]
 }
 
 
@@ -208,7 +217,7 @@ plotReactVIF <- function(vif_df,
 
 
 .react_standardise_plot_df <- function(df,
-                                       effect = c("auto", "OR", "Beta", "RD"),
+                                       effect = c("auto", "OR", "RR", "IRR", "Beta", "RD"),
                                        variables = NULL,
                                        adjustment_labels = NULL,
                                        include_reference = TRUE) {
@@ -248,11 +257,17 @@ plotReactVIF <- function(vif_df,
   if ("term_raw" %in% names(df)) std$term_raw <- as.character(df$term_raw)
   if ("is_reference" %in% names(df)) std$is_reference <- as.logical(df$is_reference)
   if ("is_intercept" %in% names(df)) std$is_intercept <- as.logical(df$is_intercept)
+  if ("Nobs_in_model" %in% names(df)) std$Nobs_in_model <- suppressWarnings(as.numeric(df$Nobs_in_model))
 
   std$.input_order <- seq_len(nrow(std))
   std <- .react_apply_adjustment_labels(std, adjustment_labels = adjustment_labels)
   std <- .react_normalise_adjustment(std)
 
+  # Multinomial rows are labelled with their outcome level as well as their category.
+  if ("outcome_level" %in% names(df)) {
+    has_outcome <- !is.na(df$outcome_level)
+    std$Category[has_outcome] <- paste0(df$outcome_level[has_outcome], ": ", std$Category[has_outcome])
+  }
   std$Category_display <- std$Category
   blank_category <- is.na(std$Category_display) | trimws(std$Category_display) == ""
   std$Category_display[blank_category] <- std$Variable[blank_category]
@@ -291,7 +306,7 @@ plotReactVIF <- function(vif_df,
     stop("Models passed to plotReactForest() must inherit from lm, glm, or gam.")
   }
 
-  coef_tab <- as.data.frame(makeORTable(model, ref_level = NULL), stringsAsFactors = FALSE)
+  coef_tab <- as.data.frame(makeORTable(model, ref_level = NULL, dp = NULL), stringsAsFactors = FALSE)
   if (!nrow(coef_tab)) {
     stop("The supplied model did not return any coefficients to plot.")
   }
@@ -404,10 +419,9 @@ plotReactVIF <- function(vif_df,
   out <- do.call(rbind, out_list)
   rownames(out) <- NULL
 
-  effect_name <- "Beta"
-  if (!is.null(model$family$family) && identical(model$family$family, "binomial")) {
-    effect_name <- "OR"
-  }
+  # Exponentiated measures (OR, RR, IRR) plot on a ratio scale; anything else as Beta.
+  effect_name <- .react_model_measure(model)
+  if (!effect_name %in% .react_ratio_measures) effect_name <- "Beta"
 
   out <- data.frame(
     Variable = as.character(out$Variable),
@@ -425,6 +439,7 @@ plotReactVIF <- function(vif_df,
   out$adjustment_label <- if (is.null(adjustment_label)) "Model" else adjustment_label
   out$adjustment <- if (is.null(adjustment)) 0L else adjustment
   out$.input_order <- seq_len(nrow(out))
+  out$Nobs_in_model <- tryCatch(stats::nobs(model), error = function(e) NA_real_)
 
   attr(out, "effect_name") <- effect_name
   out
@@ -432,7 +447,7 @@ plotReactVIF <- function(vif_df,
 
 
 .react_coerce_forest_input <- function(x,
-                                       effect = c("auto", "OR", "Beta", "RD"),
+                                       effect = c("auto", "OR", "RR", "IRR", "Beta", "RD"),
                                        variables = NULL,
                                        adjustment_labels = NULL,
                                        name_fun = NULL,
@@ -497,6 +512,18 @@ plotReactVIF <- function(vif_df,
     return(out)
   }
 
+  # Marginal effects come from their own tables; effect = "RR" prefers marginal risk
+  # ratios when they were requested, otherwise the model's own RR estimates.
+  if (is.list(x) && !is.null(x$plot_output_RRs) && identical(effect, "RR")) {
+    return(.react_standardise_plot_df(
+      x$plot_output_RRs,
+      effect = "RR",
+      variables = variables,
+      adjustment_labels = adjustment_labels,
+      include_reference = include_reference
+    ))
+  }
+
   if (is.list(x) && !is.null(x$plot_output_RDs) && identical(effect, "RD")) {
     return(.react_standardise_plot_df(
       x$plot_output_RDs,
@@ -533,18 +560,20 @@ plotReactForest <- function(univ_df_plot,
                             strip_text_size = 8,
                             arrangeByOR = FALSE,
                             variables = NULL,
-                            effect = c("auto", "OR", "Beta", "RD"),
+                            effect = c("auto", "OR", "RR", "IRR", "Beta", "RD"),
                             include_reference = TRUE,
                             name_fun = NULL,
                             auto_pretty = TRUE,
                             title = NULL,
                             subtitle = NULL,
                             xlab = NULL,
-                            null_value = NULL) {
+                            null_value = NULL,
+                            show_estimates = FALSE,
+                            estimate_adjustment = NULL,
+                            estimate_digits = NULL) {
   if (!requireNamespace("dplyr", quietly = TRUE)) stop("Please install dplyr.")
   if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Please install ggplot2.")
   if (!requireNamespace("ggforce", quietly = TRUE)) stop("Please install ggforce.")
-  if (!requireNamespace("ggnewscale", quietly = TRUE)) stop("Please install ggnewscale.")
   if (!requireNamespace("MASS", quietly = TRUE)) stop("Please install MASS.")
 
   effect <- match.arg(effect)
@@ -561,14 +590,17 @@ plotReactForest <- function(univ_df_plot,
 
   effect_name <- attr(df, "effect_name")
   if (is.null(effect_name)) effect_name <- "OR"
+  ratio_scale <- effect_name %in% .react_ratio_measures
 
   if (is.null(null_value)) {
-    null_value <- if (identical(effect_name, "OR")) 1 else 0
+    null_value <- if (ratio_scale) 1 else 0
   }
 
   if (is.null(xlab)) {
     xlab <- switch(effect_name,
                    OR = "Odds ratio",
+                   RR = "Risk ratio",
+                   IRR = "Incidence rate ratio",
                    Beta = "Beta coefficient",
                    RD = "Risk difference",
                    effect_name)
@@ -689,26 +721,82 @@ plotReactForest <- function(univ_df_plot,
     ggplot2::position_dodge2(width = 0.5, reverse = TRUE)
   }
 
-  if (!identical(effect_name, "OR") && identical(xrange, c(0.25, 16))) {
+  if (!ratio_scale && identical(xrange, c(0.25, 16))) {
     xrange <- NULL
+  }
+  if (ratio_scale && is.null(xrange)) xrange <- c(0.25, 16)
+
+  # xrange zooms the coordinate system instead of limiting the scale: scale limits turn
+  # out-of-range estimates and bounds into NA, and the layers then silently drop them.
+  if (!is.null(xrange)) {
+    plotted <- c(plot_df$effect_value, plot_df$Lower, plot_df$Upper)
+    n_clipped <- sum(plotted < xrange[[1]] | plotted > xrange[[2]], na.rm = TRUE)
+    if (n_clipped) {
+      warning(sprintf(
+        "%d estimate(s) or interval bound(s) fall outside xrange = c(%s, %s) and are clipped at the panel edge; widen `xrange` to show them in full.",
+        n_clipped, format(xrange[[1]]), format(xrange[[2]])
+      ), call. = FALSE)
+    }
+  }
+
+  # Shade alternate rows with a constant fill (white rows are the panel background), so
+  # the stripes need no fill scale; geom_blank keeps every category on the axis.
+  stripe_layers <- list(
+    ggplot2::geom_blank(
+      data = panel_stripes,
+      ggplot2::aes(x = Category_key, y = null_value),
+      inherit.aes = FALSE
+    ),
+    ggplot2::geom_tile(
+      data = panel_stripes[panel_stripes$stripe_col != "white", , drop = FALSE],
+      ggplot2::aes(x = Category_key, y = null_value, height = Inf),
+      inherit.aes = FALSE,
+      width = 1,
+      fill = "grey96",
+      alpha = alpha_val,
+      colour = NA
+    )
+  )
+  if (isTRUE(strip_borders)) {
+    stripe_layers <- c(stripe_layers, list(ggplot2::geom_tile(
+      data = panel_stripes,
+      ggplot2::aes(x = Category_key, y = null_value, height = Inf),
+      inherit.aes = FALSE,
+      width = 1,
+      fill = NA,
+      colour = "grey70",
+      linetype = "dashed"
+    )))
+  }
+
+  # Estimate column: each row's estimate (95% CI), p and N from one model, written just
+  # beyond the right edge of the panel (clipping is turned off for it), so the text lines
+  # up with its row in every facet.
+  if (isTRUE(show_estimates)) {
+    focus <- if (is.null(estimate_adjustment)) adjustment_numbers[length(adjustment_numbers)] else as.character(estimate_adjustment)
+    if (!focus %in% plot_df$adjustment) {
+      stop("estimate_adjustment ", focus, " is not among the plotted adjustment_numbers.")
+    }
+    if (is.null(estimate_digits)) estimate_digits <- if (identical(effect_name, "RD")) 3 else 2
+    estimate_rows <- plot_df[plot_df$adjustment == focus, , drop = FALSE]
+    estimate_rows$estimate_text <- unname(.react_forest_estimate_labels(estimate_rows, digits = estimate_digits))
+    estimate_header <- paste0(effect_name, " (95% CI), p",
+                              if ("Nobs_in_model" %in% names(plot_df)) ", N" else "")
+    # The text needs a fixed visible range to sit beyond.
+    if (is.null(xrange)) {
+      xrange <- range(c(plot_df$effect_value, plot_df$Lower, plot_df$Upper, null_value), na.rm = TRUE)
+    }
+    estimate_y <- if (ratio_scale) xrange[[2]] * (xrange[[2]] / xrange[[1]])^0.08 else xrange[[2]] + 0.08 * diff(xrange)
+    estimate_header_row <- data.frame(Variable = factor(var_levels[1], levels = var_levels),
+                                      header = estimate_header)
+    estimate_width_pt <- 8 * 0.55 * max(nchar(c(estimate_rows$estimate_text, estimate_header))) + 12
   }
 
   p <- ggplot2::ggplot(
     plot_df,
     ggplot2::aes(x = Category_key, y = effect_value, colour = adjust_desc, group = adjust_desc)
   ) +
-    ggplot2::geom_tile(
-      data = panel_stripes,
-      ggplot2::aes(x = Category_key, y = null_value, height = Inf, fill = stripe_col),
-      inherit.aes = FALSE,
-      width = 1,
-      alpha = alpha_val,
-      colour = if (isTRUE(strip_borders)) "grey70" else NA,
-      linetype = "dashed",
-      show.legend = FALSE
-    ) +
-    ggplot2::scale_fill_identity() +
-    ggnewscale::new_scale_fill() +
+    stripe_layers +
     ggplot2::geom_hline(yintercept = null_value, linewidth = 0.1, colour = "grey30") +
     ggplot2::geom_point(
       position = dodger,
@@ -724,7 +812,7 @@ plotReactForest <- function(univ_df_plot,
       linewidth = 0.2,
       na.rm = TRUE
     ) +
-    ggplot2::coord_flip() +
+    ggplot2::coord_flip(ylim = xrange, clip = if (isTRUE(show_estimates)) "off" else "on") +
     ggplot2::scale_shape_manual(values = c(light = 0, dark = 15), guide = "none") +
     ggforce::facet_col(
       facets = ggplot2::vars(Variable),
@@ -755,17 +843,28 @@ plotReactForest <- function(univ_df_plot,
     ) +
     ggplot2::scale_alpha_manual(values = c(dark = 1, light = 0.3), guide = "none")
 
-  if (identical(effect_name, "OR")) {
-    if (is.null(xrange)) xrange <- c(0.25, 16)
+  if (isTRUE(show_estimates)) {
+    p <- p +
+      ggplot2::geom_text(
+        data = estimate_rows,
+        ggplot2::aes(x = Category_key, y = estimate_y, label = estimate_text),
+        inherit.aes = FALSE, hjust = 0, size = 8 / ggplot2::.pt
+      ) +
+      ggplot2::geom_text(
+        data = estimate_header_row,
+        ggplot2::aes(x = Inf, y = estimate_y, label = header),
+        inherit.aes = FALSE, hjust = 0, vjust = -0.6, size = 8 / ggplot2::.pt, fontface = "bold"
+      ) +
+      ggplot2::theme(plot.margin = ggplot2::margin(5.5, estimate_width_pt, 5.5, 5.5))
+  }
+
+  if (ratio_scale) {
     breaks <- 2 ^ seq(log2(xrange[[1]]), log2(xrange[[2]]))
     p <- p + ggplot2::scale_y_continuous(
       trans = "log2",
       labels = function(x) MASS::fractions(x),
-      breaks = breaks,
-      limits = xrange
+      breaks = breaks
     )
-  } else {
-    p <- p + ggplot2::scale_y_continuous(limits = xrange)
   }
 
   if (exists("scale_color_imperial", mode = "function")) {

@@ -13,28 +13,26 @@ The current source requires R ≥ 4.1. Install the development branch from GitHu
 install.packages("remotes")
 remotes::install_github("mathzero/OverReact", ref = "dev")
 
-# Required by plotReactForest(); currently absent from DESCRIPTION.
-install.packages("ggnewscale")
-
 library(OverReact)
 ```
 
-Specify analysis data, outcomes and adjustment variables explicitly. Several
-legacy defaults refer to REACT-specific objects, variable names or assay
-characteristics.
+Specify analysis data, outcomes and adjustment variables explicitly. Data
+arguments have no defaults; some outcome and adjuster defaults still use
+REACT-specific variable names.
 
 ## Analytical workflow
 
 | Task | Principal functions |
 | --- | --- |
-| Describe a study population | `tableOne()`, `tableCat()`, `tableCont()` |
-| Estimate associations | `ModelMakerMulti()`, `ModelMakerMultiRD()` |
+| Describe a study population | `tableOne()`, `tableCat()`, `tableCont()`, `tableOneDisplay()` |
+| Estimate associations | `ModelMakerMulti()`, `ModelMakerMultiRD()`, `makeRDTable()`, `makeRRTable()` |
 | Estimate prevalence | `makeTablesNew()`, `stratifiedTables()` |
 | Combine description and regression | `run_auto_tableone_regressions()` |
 | Plot estimates and diagnostics | `plotReactForest()`, `plotReactVIF()` |
 | Export results | `saveREACTtable()`, `saveREACTplot()`, `savePrettyExcelWorkbook()` |
 
-The examples below use synthetic data:
+`vignette("OverReact")` walks through a complete analysis. The examples below use
+synthetic data:
 
 ```r
 set.seed(42)
@@ -66,6 +64,7 @@ clinical$positive <- rbinom(
 | `tableOne()` | Combine summaries of `rowvars`, optionally stratified by `colvar`. Returns `Variable`, `Level`, `Missing`, `Overall`, group columns and optional `P-value`; an observation-count row is included by default. |
 | `tableCat()` | Tabulate one categorical variable, with counts, row or column percentages, optional Wilson confidence intervals and a chi-squared test. Returns a block with a `units` column. |
 | `tableCont()` | Summarise one numeric variable as mean (SD) or median (IQR), overall and by group; optionally add an ANOVA p-value. Returns one row with a `units` column. |
+| `tableOneDisplay()` | Render a `tableOne()` result as a `flextable` or `gt` table, with variable rows in bold, indented levels, formatted p-values and SMDs, and a footnote naming each variable's test. |
 | `calculate_prop_ci()` | Calculate a binomial proportion and 95% Wilson or normal-approximation interval from a count `x` and positive integer denominator `n`. Returns `proportion`, `lower` and `upper`. |
 
 ```r
@@ -100,20 +99,34 @@ undefined categorical percentages (`NA%`). Group labels retain spaces and
 punctuation; genuine collisions receive numeric suffixes. A literal `"NA"` group
 and a missing group therefore remain distinct.
 
-With `statistical_test = TRUE`, categorical comparisons use Pearson's
-chi-squared test, with Yates' continuity correction for 2 × 2 tables. Continuous
-comparisons use the standard one-way ANOVA F-test, including when medians are
-displayed. Tests use complete cases for the variable and group, excluding empty
-levels and displayed missing categories. They are omnibus comparisons without
-multiplicity adjustment. No test is attached to the observation-count row, and
-unidentifiable comparisons return missing p-values. Exact tests, Welch ANOVA
-and non-parametric alternatives are not selected automatically.
+With `statistical_test = TRUE`, tests follow the data by default:
+`cat_test = "auto"` uses Fisher's exact test when any expected count is below 5
+and Pearson's chi-squared test (with Yates' correction for 2 × 2 tables)
+otherwise, and `cont_test = "auto"` uses one-way ANOVA for means and the
+Kruskal–Wallis test for medians. `"chisq"`, `"fisher"`, `"anova"` and `"kruskal"`
+force a test; weighted tables always use the chi-squared test. The result's
+`"tests"` attribute names the test behind each p-value. Tests use complete cases
+for the variable and group, excluding empty levels and displayed missing
+categories. They are omnibus comparisons without multiplicity adjustment. No test
+is attached to the observation-count row, and unidentifiable comparisons return
+missing p-values.
+
+`smd = TRUE` adds an `SMD` column of absolute standardised mean differences
+between the observed groups: the pooled-SD difference for continuous variables
+and the Yang–Dalton multivariate form for categorical ones (for two categories,
+`|p1 - p2| / sqrt((p1(1 - p1) + p2(1 - p2)) / 2)`). With more than two groups the
+mean of the pairwise SMDs is shown, as in the tableone package. `tableOneDisplay()`
+turns the table into a `flextable` (for Word) or `gt` (for HTML) table.
 
 `confint = TRUE` adds 95% Wilson intervals to categorical percentages;
 `formatPvalsForEpiPaper = TRUE` formats available p-values with asterisks.
 Categorical weights must name a non-negative finite numeric column; missing
-weights are excluded and cell totals are rounded before interval calculation.
-Weighted continuous summaries are unsupported and raise an error.
+weights are excluded and weighted cell totals are rounded for display. Weighted
+intervals and chi-squared tests use the Kish effective sample size,
+`sum(w)^2 / sum(w^2)`, of each denominator rather than the weighted total, so
+rescaling the weights does not change them and constant weights reproduce the
+unweighted results. This accounts for unequal weighting only, not clustering or
+stratification. Weighted continuous summaries are unsupported and raise an error.
 
 See [the table documentation](man/tableOne.Rd) and
 [implementation](R/make_table_one.R).
@@ -123,19 +136,41 @@ See [the table documentation](man/tableOne.Rd) and
 | Function | Purpose and output |
 | --- | --- |
 | `ModelMakerMulti()` | Fit crude and cumulatively adjusted models for several predictors. Returns formatted `df_output`, numeric `plot_output` and `diagnostics`. |
-| `ModelMakerMultiRD()` | Fit several predictors using cumulative or named adjustment sets, with optional risk differences, parallel execution, retries and disk checkpoints. Returns separate coefficient and risk-difference outputs plus diagnostics. |
+| `ModelMakerMultiRD()` | Fit several predictors using cumulative or named adjustment sets and any supported `family`, with optional marginal risk differences and risk ratios, parallel execution, retries and disk checkpoints. Returns separate coefficient, risk-difference and risk-ratio outputs plus diagnostics. |
 | `modelMakerSequential()` | Fit one predictor with sequential adjustment. Returns `model_df`, `model_df_predictorORs_only`, `crude_model_output`, `adj_model_outputs` and diagnostics. |
-| `modelMakerSequentialRD()` | Fit one predictor with cumulative adjustment and optional risk differences. Returns separate OR and RD tables, crude and adjusted results, diagnostics and sample counts. |
-| `modelMakerAdjustedSetsRD()` | Fit one predictor using named `adj_sets`. Returns `model_df_ORs`, `model_df_RDs`, `crude_model_OR`, `crude_model_RD`, `adj_or_outputs`, `adj_rd_outputs`, `diagnostics` and sample counts. |
-| `makeORTable()` | Extract coefficients, 95% normal-approximation Wald intervals and model-summary p-values from a fitted model. Binomial coefficients are exponentiated; other coefficients retain their original scale. Optional reference rows and term metadata are included. |
-| `makeRDTable()` | Estimate marginal risk contrasts for factor predictors in a binomial model. Returns `Level`, `RD`, `Lower`, `Upper` and `P_value`; intervals use multivariate-normal coefficient simulation. Numeric-predictor output has a legacy limitation described below. |
+| `modelMakerSequentialRD()` | Fit one predictor with cumulative adjustment and optional risk differences and ratios. Returns separate coefficient, RD and RR tables, crude and adjusted results, diagnostics and sample counts. |
+| `modelMakerAdjustedSetsRD()` | Fit one predictor using named `adj_sets`. Returns `model_df_ORs`, `model_df_RDs`, `model_df_RRs`, the matching `crude_model_*` and `adj_*_outputs` tables, `diagnostics`, the `family` and `measure`, and sample counts. |
+| `makeORTable()` | Extract coefficients, 95% Wald intervals and p-values from a fitted `glm`, `lm`, `gam`, `polr` or `multinom` model. Logit-link coefficients are exponentiated to odds ratios and log-link coefficients to risk or rate ratios; other links keep their original scale. The `measure` column says which (`OR`, `RR`, `IRR`, `Beta` or `Coef`). Optional reference rows and term metadata are included; `dp = NULL` returns unrounded estimates. |
+| `makeRDTable()` | Estimate marginal risk differences for a factor or numeric predictor in a binomial model, as described below. Returns `Level`, `RD`, `Lower`, `Upper` and `P_value`; intervals use the delta method, or coefficient simulation with `ci_method = "simulation"`. |
+| `makeRRTable()` | Estimate marginal risk ratios in the same way, returning `Level`, `RR`, `Lower`, `Upper` and `P_value`. |
 | `safe_makeRDTable()` | Wrap `makeRDTable()` with error capture and an explicit reference row for factor predictors. Returns `NULL` on a caught error. |
 
-The modelling wrappers select a binomial logit model when the outcome has two
-distinct non-missing values, otherwise a Gaussian identity model. Encode binary
-outcomes as 0/1, logical values or a two-level factor. Multinomial regression is
-not implemented. Character predictors and adjusters are converted to factors;
-unused levels are dropped within the analysis sample.
+### Model families
+
+The `family` argument of the modelling wrappers selects the model; each family
+reports one effect measure, and estimate columns are named after it.
+
+| `family` | Model | Measure |
+| --- | --- | --- |
+| `"binomial"` | Logistic regression | `OR` |
+| `"gaussian"` | Linear regression | `Beta` |
+| `"poisson"`, `"quasipoisson"` | Log-linear count model; `offset` names a column of exposure times, entered as `offset(log(...))` | `IRR` |
+| `"log_binomial"` | Binomial regression with a log link, started inside the parameter space | `RR` |
+| `"modified_poisson"` | Poisson regression of a binary outcome with HC0 sandwich standard errors | `RR` |
+| `"ordinal"` | Proportional-odds model (`MASS::polr()`) | `OR` |
+| `"multinomial"` | Multinomial logit (`nnet::multinom()`); one block of rows per non-reference outcome level | `OR` |
+
+`family = "auto"` (the default) chooses binomial for two distinct values,
+ordinal for an ordered factor, multinomial for another categorical outcome with
+three or more levels, and Gaussian otherwise. Encode binary outcomes as 0/1,
+logical values or a two-level factor; other two-value codings (such as 1/2), and
+outcomes that do not suit an explicitly chosen family, raise an error before any
+model is fitted. Character predictors and adjusters are converted to
+factors, and ordered factors are treated as unordered, so every level is compared
+with the reference. Unused levels are dropped within the analysis sample. The crude
+model is stage 0 and each adjusted model adds one to the stage number. Reference
+rows show `-` in the formatted tables, and every stage keeps its column even when
+its model cannot be fitted.
 
 ```r
 models <- ModelMakerMultiRD(
@@ -146,7 +181,6 @@ models <- ModelMakerMultiRD(
   adj_sets = list(demographic = c("age", "sex")),
   include_crude = TRUE,
   include_rd = TRUE,
-  n_sim = 1000,
   sample_strategy = "common_per_predictor",
   ncores = 1
 )
@@ -154,51 +188,83 @@ models <- ModelMakerMultiRD(
 models$df_output
 models$df_output_RDs
 models$diagnostics
+
+# Risk ratios from a modified Poisson model, and marginal risk ratios.
+rr_models <- ModelMakerMultiRD(
+  dat = clinical,
+  list_of_variables_of_interest = c("vaccinated", "sex"),
+  outcome = "positive",
+  joint_adjustment_vars = "age",
+  family = "modified_poisson",
+  include_rr = TRUE,
+  ncores = 1
+)
 ```
 
 With `incremental = TRUE`, adjusters enter cumulatively in the order supplied
 in `joint_adjustment_vars`; otherwise `adj_sets` specifies named models. A
-predictor is removed from its own adjustment set. The default
+predictor is removed from its own adjustment set, and its stages keep the
+numbers they have for other predictors: stage k adjusts for the first k
+adjusters, so a predictor's own position is skipped. The default
 `sample_strategy = "common_per_predictor"` uses complete cases across that
 predictor, the outcome and all its requested adjusters, preserving a common
 sample across adjustment stages. `"per_model"` permits the sample to vary by
-stage. Different predictors may still have different analysis samples.
+stage. Different predictors may still have different analysis samples. Each
+predictor's reference level and level order are fixed from its largest analysis
+sample; under `"per_model"`, a stage whose sample lacks the reference level is
+reported as failed in `diagnostics` instead of being estimated against another
+reference. A `ref_level` supplied to the single-predictor wrappers is used for
+estimation as well as labelling.
 
 ### Results and diagnostics
 
 | `ModelMakerMultiRD()` element | Contents |
 | --- | --- |
-| `df_output` | Formatted coefficient or odds-ratio tables across model stages. |
-| `plot_output` | Numeric estimates, `Lower`, `Upper`, `P_value`, reference indicators, stage labels and `Nobs_in_model`. |
+| `df_output` | Formatted estimates across model stages; columns end in the family's measure (for example `crude_mod_OR`, `adj_age_IRR`). Multinomial models add an `Outcome` column. |
+| `plot_output` | Numeric estimates (in a column named after the measure), `Lower`, `Upper`, `P_value`, `Q_value`, reference indicators, `measure`, `model_family`, stage labels and `Nobs_in_model`; multinomial models add `outcome_level`. |
 | `df_output_RDs` | Formatted risk-difference tables; `NULL` when unavailable. |
 | `plot_output_RDs` | Numeric risk differences and intervals; `NULL` when unavailable. |
+| `df_output_RRs`, `plot_output_RRs` | Formatted and numeric marginal risk ratios with `include_rr = TRUE`; `NULL` when unavailable. |
 | `diagnostics` | Stage, adjustment variables, status, errors, captured warnings, sample size, covariance validity, separation flags and attempt number. |
 
-Gaussian models are labelled `Beta` in batch plotting outputs. Some lower-level
-tables retain `OR` in column names for compatibility; consult `model_family`
-before interpreting estimates. Coefficient intervals use the normal
-approximation; p-values are taken from the fitted model summary.
+`Q_value` holds multiple-testing adjusted p-values: Benjamini–Hochberg by
+default, or any `stats::p.adjust()` method through `p_adjust_method`, applied
+within each adjustment stage across every predictor and level (reference rows are
+not tests). `p_adjust_method = "none"` omits the column. The same adjustment is
+applied to the risk-difference and risk-ratio tables, and `ModelMakerMulti()`
+supports it too.
 
-For categorical risk differences, predicted probabilities are averaged over
-the analysis sample under each exposure level and contrasted with the reference
-level. Simulation uses `n_sim` coefficient draws and the fitted covariance
-matrix; intervals are the 2.5th and 97.5th percentiles, and p-values use a normal
-approximation with the simulated standard deviation. These are model-based
-associations; causal interpretation requires additional assumptions.
+Lower-level tables (from `makeORTable()` and the single-predictor wrappers) keep
+the estimate column name `OR` for compatibility; their `measure` column gives the
+actual measure. Coefficient intervals use normal quantiles, or t
+quantiles with the residual degrees of freedom when the model reports t tests (as
+Gaussian models do), so intervals agree with the p-values from the fitted model
+summary. Numeric outputs are unrounded; only the formatted tables are rounded.
 
-The numeric-predictor branch of `makeRDTable()` currently computes
-`mean(p * (1 - p) * x)`, rather than the usual coefficient-based logistic
-derivative. Its output requires independent validation before interpretation as
-an average marginal effect. Risk differences are produced only for binomial
-models; `include_rd = FALSE` disables them. The default simulation size is 100.
+Marginal risk differences (`include_rd`) and risk ratios (`include_rr`) are
+estimated by standardisation over the analysis sample. For a factor predictor,
+predicted risks are averaged with every observation set to each level and
+contrasted with the reference level, as a difference or a ratio. For a numeric
+predictor, the risk difference is the average marginal effect (the mean
+derivative of predicted risk per one-unit increase), and the risk ratio is the
+proportional change in mean risk per unit, `exp(d log(mean risk) / dx)`.
+Intervals use the delta method by default, on the log scale for ratios;
+`rd_ci_method = "simulation"` instead takes the 2.5th and 97.5th percentiles of
+`n_sim` multivariate-normal coefficient draws, using a fixed seed without
+disturbing the session's random-number stream. P-values use a normal
+approximation. These are model-based associations; causal interpretation
+requires additional assumptions. Marginal effects need a binary outcome (the
+binomial, log-binomial and modified Poisson families) and are skipped otherwise;
+`include_rd = FALSE` disables risk differences.
 
 `ncores = NULL` or `1` runs sequentially. Larger values request a `future`
 backend. `ModelMakerMultiRD()` can retry incomplete results with revised GLM
 controls and recover from parallel failures. Supplying `savepath` writes
-aggregate CSV/RDS results and per-predictor checkpoints under `runs/`. Reuse a
-checkpoint directory only for an unchanged dataset and model specification:
-completed outputs are detected by predictor filenames, without validating the
-analysis configuration.
+aggregate CSV/RDS results and per-predictor checkpoints under `runs/`. Each
+checkpoint stores a fingerprint of the model specification and the predictor's
+data columns; a checkpoint that does not match the current call is recomputed
+rather than reused. Checkpoints written by earlier versions have no fingerprint
+and are recomputed once.
 
 ### Supporting functions
 
@@ -208,10 +274,11 @@ analysis configuration.
 | `check_perfect_separation()` | Flag zero cells in a categorical predictor × binary outcome table. Returns a message or `NULL`; this is a screening heuristic, not a general separation diagnostic. |
 | `build_cumulative_sets()` | Convert an ordered vector of adjusters to a named list of cumulative sets. |
 | `compute_level_order()` | Return factor levels with a labelled reference first; return `NULL` for non-factors. |
-| `get_pretty_name()` | Resolve a display label from `options(modelmaker.name_map = ...)`, a variable's `label` attribute, or automatic title casing; an optional `name_fun` transforms the fallback label. |
+| `get_pretty_name()` | Resolve a display label from `name_map`, `options(modelmaker.name_map = ...)`, a variable's `label` attribute, or automatic title casing; an optional `name_fun` transforms the fallback label. |
 
-`cov_name_list` is retained in batch-model signatures but currently does not
-apply labels. Use `modelmaker.name_map`, column labels or `name_fun` instead.
+`cov_name_list`, a named vector or list, sets display labels in the batch
+wrappers. Variables whose labels coincide (for example `age_grp` and `age grp`)
+get their raw names appended, so their results are never merged.
 See [the model wrappers](R/bulk_run_models_ORs_RDs.R) and
 [coefficient-only interface](R/make_OR_tables.R).
 
@@ -241,22 +308,23 @@ prevalence_table <- makeTablesNew(
 `add_conf_ints()` uses Wilson intervals by default. Assay correction applies
 `(p + spec - 1) / (sens + spec - 1)` to the estimate and interval bounds,
 constraining results to [0, 1]. Sensitivity and specificity are treated as fixed;
-their uncertainty is not propagated. The `makeTablesNew()` defaults
-(`sens = 0.844`, `spec = 0.986`) are study-specific. Setting both to 1 returns
-uncorrected estimates.
+their uncertainty is not propagated. `makeTablesNew()` and `stratifiedTables()`
+default to `sens = 1` and `spec = 1`, which return uncorrected estimates; supply
+assay values explicitly to correct for test performance. (Earlier versions
+silently applied the REACT assay values `sens = 0.844` and `spec = 0.986`.)
 
 Numeric `makeTablesNew()` output contains `Positive`, `Total`, `Prevalence`,
-`Lower` and `Upper`; prevalence columns refer to assay-adjusted estimates.
-`percent = TRUE` expresses these on a percentage scale. `for_report = TRUE`
-returns observed and adjusted estimates as formatted percentage intervals.
-Supply `cov_name_list` explicitly, including `NULL` when labels are unnecessary.
-The output schema assumes an outcome coded 0/1 despite accepting alternative
-positive and negative labels.
+`Lower` and `Upper`; prevalence columns refer to assay-adjusted estimates, which
+equal the observed estimates under the defaults. `percent = TRUE` expresses these
+on a percentage scale. `for_report = TRUE` returns observed and adjusted
+estimates as formatted percentage intervals. `cov_name_list` is optional, and
+covariates with no observed values are skipped with a message. `pos_val` and
+`neg_val` name the outcome's positive and negative values; other values, such as
+missing-data codes, are excluded.
 
 Weighted counts are rounded before binomial interval calculation. This is not
-survey-design inference. The current `stratifiedTables()` wrapper does not
-forward all its exposed options, including alternative outcome coding and
-`percent`; use `makeTablesNew()` on explicit subsets when these are required.
+survey-design inference. `stratifiedTables()` forwards outcome coding, assay
+values, weights and `percent` to `makeTablesNew()`.
 See [the prevalence implementation](R/make_prevalence_tables.R).
 
 ## Automated analysis
@@ -270,20 +338,24 @@ report.
 The descriptive table is stratified when the outcome is factor, character or
 logical, or numeric with at most `outcome_cat_unique_threshold` distinct values
 (default 6). This rule controls table layout, independently of the regression
-family. `include_rd` defaults to `FALSE`; supplying `NULL` enables automatic
-selection for binary outcomes. The report ranks associations by p-value,
-selecting one category per predictor from the highest model-stage index. Treat
-this ranking as exploratory, particularly when adjustment sets are not nested.
+`family`, which is passed to `ModelMakerMultiRD()`. `include_rd` defaults to
+`FALSE`; supplying `NULL` enables automatic selection for binary outcomes, and
+`include_rr = TRUE` adds marginal risk ratios. Each report line also shows a
+q-value, adjusted over all the tests that section ranks (every level of each
+predictor's most-adjusted model); `p_adjust_method = NULL` omits them. The report ranks associations by p-value,
+selecting one category per predictor from that predictor's most-adjusted model;
+a predictor that is also a covariate is not adjusted for itself. Treat this
+ranking as exploratory, particularly when adjustment sets are not nested.
 See [the driver](R/automated_analysis.R).
 
 ## Figures, themes and colours
 
 | Function | Purpose and output |
 | --- | --- |
-| `plotReactForest()` | Create a forest plot from batch-model results, numeric plotting data, an `lm`/`glm`/`gam` fit, or a named list of fits. Supports `effect = "OR"`, `"Beta"` or `"RD"`, adjustment labels, reference rows and variable selection. |
+| `plotReactForest()` | Create a forest plot from batch-model results, numeric plotting data, an `lm`/`glm`/`gam` fit, or a named list of fits. Supports `effect = "OR"`, `"RR"`, `"IRR"`, `"Beta"` or `"RD"`, adjustment labels, reference rows, variable selection and an optional column of estimates, intervals, p-values and sample sizes. |
 | `plotReactVIF()` | Plot externally supplied variance inflation factors by adjustment stage. Requires `Variable`, `adjustment` and `vif`; batch model wrappers do not currently return VIFs. |
-| `theme_react()` | Apply the REACT theme with white backgrounds, small text and configurable facet and title styling. |
-| `theme_mw()` | Apply a related theme with panel borders, ticks and configurable grids and legend placement. |
+| `theme_react()` | Apply the REACT theme with white backgrounds, small text and configurable base size, facet and title styling; further theme elements can be passed through `...`. |
+| `theme_mw()` | Apply a related theme with panel borders, ticks and configurable grids and legend placement; a numeric `legend.position` places the legend inside the panel. |
 | `imperial_cols()` | Retrieve named colours; with no arguments, return the complete named vector. |
 | `imperial_pal_discrete()` | Return a function generating discrete colours, retaining the specified palette and optionally extending it with distinct HCL colours. |
 | `imperial_pal_continuous()` | Return a palette interpolation function using CIELAB colour space. |
@@ -294,7 +366,8 @@ See [the driver](R/automated_analysis.R).
 | `pick_fallback_colours()` | Select additional qualitative HCL colours, favouring separation from existing colours in CIELAB space. |
 
 ```r
-forest <- plotReactForest(models, effect = "OR", title = "Adjusted associations")
+forest <- plotReactForest(models, effect = "OR", title = "Adjusted associations",
+                          xrange = c(1 / 8, 8), show_estimates = TRUE)
 forest
 
 # Risk differences from the same fitted models.
@@ -306,15 +379,23 @@ ggplot2::ggplot(clinical, ggplot2::aes(x = age, fill = sex)) +
   theme_react()
 ```
 
-Forest plots use a logarithmic odds-ratio scale with null value 1, and linear
-coefficient or risk-difference scales with null value 0. Pass numeric
-`plot_output` data rather than formatted table strings. `plotReactForest()`
-requires `ggnewscale` in addition to the declared package dependencies.
+Forest plots use a logarithmic scale with null value 1 for ratios (OR, RR,
+IRR), and linear coefficient or risk-difference scales with null value 0. For a
+batch result, `effect = "RR"` plots the marginal risk ratios when they were
+requested, and multinomial rows are labelled with their outcome level.
+`show_estimates = TRUE` adds a column to the right of each panel giving every
+row's estimate (95% CI), p-value and N, from the last plotted model or the stage
+named by `estimate_adjustment`; `estimate_digits` sets the decimal places. `xrange`
+sets the visible ratio range (default 1/4 to 16); estimates or interval bounds beyond
+it are clipped at the panel edge, with a warning. Pass numeric
+`plot_output` data rather than formatted table strings.
 
 `imperial_colours` stores named hexadecimal colours; `imperial_palettes` stores
 palette definitions. Available palettes are `default`, `gradient`, `earth`,
 `cool`, `warm`, `soft`, `bold`, `nature`, `two_col_grey_teal`,
-`two_col_pink_purple` and `two_col_blue_green`. Discrete palettes extend by
+`two_col_pink_purple` and `two_col_blue_green`. Palettes leave out the two colours
+that are nearly invisible on the white theme (`White_Smoke` and `Yellow`), which
+remain available through `imperial_cols()`. Discrete palettes extend by
 default; `fallback = FALSE` enforces the original palette length.
 See [plots](R/plots.R), [themes](R/ggplot_themes.R) and
 [palette functions](R/imperial_colour_scheme_functions.R).
@@ -323,22 +404,22 @@ See [plots](R/plots.R), [themes](R/ggplot_themes.R) and
 
 | Function | Purpose and output |
 | --- | --- |
-| `reactCleaner()` | Dispatch binary, continuous or date cleaning. Binary recoding uses `negval`/`posval`; continuous cleaning replaces values below `floornumber`; date cleaning returns formatted character strings. |
+| `reactCleaner()` | Dispatch binary, continuous or date cleaning; other `datatype` values raise an error. Binary recoding uses `negval`/`posval`; continuous cleaning replaces values below `floornumber`; date cleaning returns formatted character strings. |
 | `binaryCleaner()` | Recode 1 → 1 and 2 → 0; other values become missing. |
 | `binaryCleaner_1_0()` | Retain 0/1 values and replace other values with missing. |
 | `continuousCleaner()` | Replace values below `floornumber` (default 1) with missing. |
 | `dateCleaner()` | Parse dates using `dateFormat`, treating `"#NULL!"`, `"-66"` and `"-99"` as missing. Returns a `Date` vector. |
 | `canBeNumeric()` | Test whether numeric conversion introduces additional missing values; return a logical scalar. |
-| `checkConvertNumeric()` | Convert every eligible data-frame column to numeric; return a data frame. Numeric-looking categorical codes also qualify. |
+| `checkConvertNumeric()` | Convert every eligible column to numeric, keeping column names. A column converts only if no new missing values appear and distinct values stay distinct, so codes such as `"01"` and `"1"` are left unchanged. Numeric-looking factor codes otherwise qualify. |
 | `calculateEpiStats()` | Calculate sensitivity, specificity, positive predictive value and negative predictive value from binary 0/1 prediction and outcome vectors. `returnAllStats = TRUE` adds sample and confusion-matrix counts. |
-| `pValEpiConverter()` | Convert p-values to threshold labels with three or four significance-asterisk levels. |
-| `pvalAsterisker()` | Return significance asterisks, optionally including rounded p-values and non-significance labels. |
+| `pValEpiConverter()` | Convert p-values to threshold labels with three or four significance-asterisk levels; missing p-values stay missing. |
+| `pvalAsterisker()` | Return significance asterisks, optionally including rounded p-values (in fixed notation, such as `<0.0001`) and non-significance labels; missing p-values stay missing. |
 | `specifyDecimal()` | Format numbers using `formatC()` and `k` digits; `format = "f"` fixes decimal places, whereas the default `"fg"` uses significant-digit formatting. `simpleround = TRUE` returns rounded numbers. |
 | `comma_sep()` | Format numbers with comma thousands separators and integer precision. |
 
-Clean missing-value codes before calculating diagnostic accuracy: the count
-calculations omit missing products, while the optional sample counts are not
-restricted to complete prediction–outcome pairs. Formatting functions change
+Clean missing-value codes before calculating diagnostic accuracy;
+`calculateEpiStats()` uses complete prediction–outcome pairs for every count.
+Formatting functions change
 presentation only; asterisks do not implement a multiple-testing correction.
 See [cleaning](R/cleaner_functions.R), [epidemiological utilities](R/epi_functions.R)
 and [numeric formatting](R/specify_decimal.R).
@@ -356,7 +437,8 @@ and [numeric formatting](R/specify_decimal.R).
 results_dir <- file.path(tempdir(), "overreact-example")
 dir.create(results_dir, showWarnings = FALSE, recursive = TRUE)
 
-# Table and workbook functions concatenate paths; include the final separator.
+# Paths are concatenated, so outpath may end in a filename prefix; an existing
+# directory also works without the final separator.
 outpath <- paste0(results_dir, .Platform$file.sep)
 saveREACTtable(table_one, outpath = outpath, filename = "table_one", save_rds = TRUE)
 savePrettyExcelWorkbook(
@@ -368,8 +450,9 @@ saveREACTplot(forest, figpath = results_dir, filename = "forest",
               width = 8, height = 5, savePDF = FALSE)
 ```
 
-Create output directories before export. Workbook sheet names are truncated to
-30 characters; supply distinct names. See [export functions](R/save_functions.R).
+Create output directories before export. Matrices and two-way tables are
+written with their layout and row labels. Workbook sheet names are truncated to 30
+characters, characters Excel forbids are replaced, and duplicates are numbered. See [export functions](R/save_functions.R).
 
 ## Legacy interfaces
 
@@ -378,13 +461,13 @@ the current descriptive and modelling interfaces.
 
 | Function | Behaviour and limitations |
 | --- | --- |
-| `crossTab()` | Categorical counts, margins, percentages, optional Wilson intervals and a chi-squared p-value. Uses the spelling `rowwise_precentages`. With weights and `confint = FALSE`, percentages are currently calculated from unweighted counts. |
+| `crossTab()` | Categorical counts, margins, percentages, optional Wilson intervals and a chi-squared p-value. Uses the spelling `rowwise_precentages`. With weights, counts are weighted and rounded, percentages come from those counts, and intervals and the chi-squared test use Kish effective sample sizes. |
 | `crossTabContinuous()` | Group-specific mean (SD) or median (IQR), pooled summaries and optional ANOVA. Weights affect group means and SDs only; pooled summaries and medians remain unweighted. |
 | `crossTabMulti()` | Combine legacy categorical and continuous cross-tabs into `Variable`/`Category` rows with a `Pooled` column. `rowvar_list` is deprecated in favour of `rowvars`; continuous weights are not forwarded. |
 | `xtabPercentageExtractor()` | Extract text or numeric values between configurable regular-expression delimiters, commonly percentages or interval bounds. |
-| `makeXtabPlottable()` | Intended to extract percentages and optionally pivot a cross-tab to long format. The current implementation references the undefined helper `xtab_percentage_extractor` and requires repair before use. |
-| `GAMModelMaker()` | Legacy sequential binomial GAM wrapper with optional smooth adjustment terms. The current implementation uses an ambient `dat` object and an output schema incompatible with the current coefficient extractor. |
-| `naReporter()` | Intended to audit REACT missing codes (`-91`, `-92`, `-77`, `-99`) and ordinary missingness. The current implementation constructs a report but returns `NULL`. |
+| `makeXtabPlottable()` | Extract the percentages from a legacy cross-tab and optionally pivot it to long `Variable`, `Category`, `name`, `value` format for plotting. |
+| `GAMModelMaker()` | Legacy sequential binomial GAM wrapper; `spline_vars` indexes the adjusters entered as smooth terms. Returns formatted `model_df` columns per stage and the coefficient tables. |
+| `naReporter()` | Count REACT missing codes (`-91`, `-92`, `-77`, `-99`) and ordinary missing values; returns one row per variable. |
 
 See [legacy cross-tabs](R/make_cross_tabs.R) and
 [legacy modelling code](R/make_OR_tables.R).

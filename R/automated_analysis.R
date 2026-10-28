@@ -22,8 +22,8 @@ run_auto_tableone_regressions <- function(
     table_summary_stat = c("mean","median"),
     include_percentages = TRUE,
     statistical_test = TRUE,
-    includeNAsColvar = F,
-    includeNAsRowvar = F,
+    includeNAsColvar = FALSE,
+    includeNAsRowvar = FALSE,
     formatPvalsForEpiPaper = FALSE,
     addNobsTopRow = TRUE,
     # By default, treat outcome as categorical if factor/character/logical
@@ -33,9 +33,13 @@ run_auto_tableone_regressions <- function(
     incremental = TRUE,
     adj_sets = NULL,                # ignored if incremental = TRUE
     include_crude = TRUE,
-    include_rd = FALSE,              # auto: TRUE for binomial outcome, else FALSE
+    include_rd = FALSE,              # NULL: TRUE for binary outcomes, else FALSE
+    include_rr = FALSE,              # marginal risk ratios (binary outcomes)
+    family = "auto",                 # model family; see ModelMakerMultiRD()
+    p_adjust_method = "BH",          # q-values (p.adjust method); NULL or "none" for none
     ncores = NULL,
     n_sim = 100,
+    rd_ci_method = c("delta", "simulation"),
     glm_control = glm.control(maxit = 50),
     # ---- Pretty-printing / naming ----------------------------------------
     name_fun = NULL,                # optional prettifier; passed through to ModelMakerMultiRD
@@ -73,14 +77,16 @@ run_auto_tableone_regressions <- function(
     if (p < 0.001) return(sprintf("<%.3f", 0.001))
     sprintf("%.4f", p)
   }
-  fmt_ci <- function(lo, hi, digits = 2) sprintf("(%.2f, %.2f)", round(lo, digits), round(hi, digits))
-  fmt_rd <- function(x, digits = 3) ifelse(is.na(x), "NA", sprintf("%.3f", x))
+  fmt_ci <- function(lo, hi, digits = 2) sprintf("(%.*f, %.*f)", digits, lo, digits, hi)
+  fmt_rd <- function(x, digits = 3) ifelse(is.na(x), "NA", sprintf("%.*f", digits, x))
   coalesce_chr <- function(x, y) ifelse(is.na(x) | x == "", y, x)
 
-  # Determine outcome family & RD default
-  non_na_y <- dat[[outcome]][!is.na(dat[[outcome]])]
-  is_binom <- length(unique(non_na_y)) == 2L
-  if (is.null(include_rd)) include_rd <- is_binom
+  # Determine the model family; marginal effects need a binary outcome
+  spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome)
+  if (is.null(include_rd)) include_rd <- isTRUE(spec$binary)
+  # What the report describes: requests for other outcomes are skipped by the models.
+  rd_estimated <- isTRUE(include_rd) && isTRUE(spec$binary)
+  rr_estimated <- isTRUE(include_rr) && isTRUE(spec$binary)
 
   # ---- 1) Build Table 1 -------------------------------------------------
   table_summary_stat <- match.arg(table_summary_stat)
@@ -122,7 +128,11 @@ run_auto_tableone_regressions <- function(
     remove_intercept_from_results = TRUE,
     ncores                      = ncores,
     include_rd                  = include_rd,
+    include_rr                  = include_rr,
+    family                      = spec$name,
+    p_adjust_method             = p_adjust_method,
     n_sim                       = n_sim,
+    rd_ci_method                = match.arg(rd_ci_method),
     savepath                    = save_dir,
     glm_control                 = glm_control,
     retry_failed                = TRUE,
@@ -132,34 +142,18 @@ run_auto_tableone_regressions <- function(
   )
 
   # mm elements we'll use
-  df_or_wide   <- mm$df_output            # wide strings for OR/Beta
-  df_rd_wide   <- mm$df_output_RDs        # wide strings for RD
-  plot_or_long <- mm$plot_output          # numeric OR/Beta, CI, P_value
-  plot_rd_long <- mm$plot_output_RDs      # numeric RD, CI, P_value
+  marginal_tables <- list(RD = mm$plot_output_RDs, RR = mm$plot_output_RRs)
   diag_df      <- mm$diagnostics
 
   # ---- 3) Build "short report" ------------------------------------------
   # Strategy:
-  #  * Identify the "fully adjusted" rows in plot_* (max adjustment count).
+  #  * Identify each Variable's "fully adjusted" rows in plot_* (its max adjustment count).
   #  * For each Variable, pick the level with the smallest p-value (excluding reference rows).
-  #  * Summarise top_k by p-value (ORs/Beta and RDs if available).
+  #  * Summarise top_k by p-value (model estimates, then marginal RDs and RRs if available).
 
-  # Determine which adjustment is "full"
-  full_adj <- NA_integer_
-  if (!is.null(plot_or_long) && nrow(plot_or_long)) {
-    if ("adjustment" %in% names(plot_or_long)) {
-      full_adj <- suppressWarnings(max(plot_or_long$adjustment, na.rm = TRUE))
-      if (!is.finite(full_adj)) full_adj <- NA_integer_
-    }
-  }
-  if (is.na(full_adj) && !is.null(plot_rd_long) && nrow(plot_rd_long)) {
-    if ("adjustment" %in% names(plot_rd_long)) {
-      full_adj <- suppressWarnings(max(plot_rd_long$adjustment, na.rm = TRUE))
-      if (!is.finite(full_adj)) full_adj <- NA_integer_
-    }
-  }
-
-  # Filter to full adjustment; include crude if nothing else exists
+  # Filter to each Variable's fullest adjustment; include crude if nothing else exists.
+  # The maximum is per Variable: a predictor that is also a covariate is never adjusted
+  # for itself, so it has fewer stages than the others and a global maximum would drop it.
   filter_full <- function(df) {
     if (is.null(df) || !nrow(df)) return(df)
     d <- df
@@ -172,8 +166,12 @@ run_auto_tableone_regressions <- function(
     if ("is_intercept" %in% names(d)) {
       d <- d[!ifelse(is.na(d$is_intercept), FALSE, d$is_intercept), , drop = FALSE]
     }
-    if (!is.na(full_adj) && "adjustment" %in% names(d)) {
-      d_full <- d[is.finite(d$adjustment) & d$adjustment == full_adj, , drop = FALSE]
+    if (all(c("adjustment", "Variable") %in% names(d)) && nrow(d)) {
+      adj <- suppressWarnings(as.numeric(d$adjustment))
+      full_adj <- ave(adj, d$Variable, FUN = function(a) {
+        if (all(is.na(a))) NA_real_ else max(a, na.rm = TRUE)
+      })
+      d_full <- d[!is.na(adj) & !is.na(full_adj) & adj == full_adj, , drop = FALSE]
       if (nrow(d_full)) return(d_full)
     }
     # fallback: crude only
@@ -184,44 +182,46 @@ run_auto_tableone_regressions <- function(
     d
   }
 
-  full_or <- filter_full(plot_or_long)
-  full_rd <- filter_full(plot_rd_long)
-
-  # Per-variable "best" (smallest p) rows
-  best_by_var <- function(df, effect_col = c("OR","Beta","RD")) {
-    if (is.null(df) || !nrow(df) || !"Variable" %in% names(df) || !"P_value" %in% names(df)) {
-      return(df[0, , drop = FALSE])
-    }
-    effect_col <- match.arg(effect_col)
-    d <- df
-    # Choose the right effect column name present in df
-    if (!(effect_col %in% names(d))) {
-      # Switch OR/Beta if gaussian relabelling happened
-      if (effect_col == "OR" && "Beta" %in% names(d)) effect_col <- "Beta"
-      if (effect_col == "RD" && !"RD" %in% names(d)) return(d[0, , drop = FALSE])
-    }
-    # Keep the lowest p row per variable
-    o <- do.call(rbind, lapply(split(d, d$Variable), function(z) {
-      z <- z[order(z$P_value, na.last = TRUE), , drop = FALSE]
-      z[1, , drop = FALSE]
+  # The top_k predictors by p-value, each represented by its lowest-p category, with
+  # q-values over every test the section ranks (all levels of each predictor's
+  # most-adjusted model).
+  use_q <- !is.null(p_adjust_method) && !identical(p_adjust_method, "none")
+  top_rows <- function(df) {
+    df <- filter_full(df)
+    if (is.null(df) || !nrow(df) || !all(c("Variable", "P_value") %in% names(df))) return(NULL)
+    if (use_q) df$report_q <- stats::p.adjust(df$P_value, method = p_adjust_method)
+    best <- do.call(rbind, lapply(split(df, df$Variable), function(z) {
+      z[order(z$P_value, na.last = TRUE)[1], , drop = FALSE]
     }))
-    rownames(o) <- NULL
-    o
+    best <- best[order(best$P_value), , drop = FALSE]
+    rownames(best) <- NULL
+    utils::head(best, top_k)
   }
 
-  best_or <- best_by_var(full_or, effect_col = "OR")  # will use Beta if gaussian
-  best_rd <- best_by_var(full_rd, effect_col = "RD")
-
-  # Order by p-value and limit to top_k
-  top_or <- if (!is.null(best_or) && nrow(best_or)) best_or[order(best_or$P_value), , drop = FALSE] else best_or
-  top_rd <- if (!is.null(best_rd) && nrow(best_rd)) best_rd[order(best_rd$P_value), , drop = FALSE] else best_rd
-  if (!is.null(top_or) && nrow(top_or) > top_k) top_or <- top_or[seq_len(top_k), , drop = FALSE]
-  if (!is.null(top_rd) && nrow(top_rd) > top_k) top_rd <- top_rd[seq_len(top_k), , drop = FALSE]
+  bullets <- function(top, effect_name, digits) {
+    apply(top, 1, function(r) {
+      var   <- coalesce_chr(r[["Variable"]], "")
+      catg  <- coalesce_chr(r[["Category"]], "")
+      if ("outcome_level" %in% names(top) && !is.na(r[["outcome_level"]])) {
+        catg <- paste0(r[["outcome_level"]], ": ", catg)
+      }
+      ptxt  <- fmt_p(suppressWarnings(as.numeric(r[["P_value"]])))
+      eff   <- suppressWarnings(as.numeric(r[[effect_name]]))
+      lo    <- suppressWarnings(as.numeric(r[["Lower"]]))
+      hi    <- suppressWarnings(as.numeric(r[["Upper"]]))
+      eff_str <- if (is.na(eff)) "NA" else paste(fmt_rd(eff, digits), fmt_ci(lo, hi, digits))
+      # Show model/adjustment label if useful
+      lab <- if ("adjustment_label" %in% names(top)) coalesce_chr(r[["adjustment_label"]], "") else ""
+      lab <- if (nzchar(lab)) paste0(" [", lab, "]") else ""
+      qtxt <- if (use_q) paste0(", q=", fmt_p(suppressWarnings(as.numeric(r[["report_q"]])))) else ""
+      paste0("- **", var, "** - ", catg, ": ", effect_name, "=", eff_str, ", p=", ptxt, qtxt, lab)
+    })
+  }
 
   # Compose markdown report
   n_total <- nrow(dat)
   n_y_obs <- sum(!is.na(dat[[outcome]]))
-  fam_lab <- if (is_binom) "Binomial (logit)" else "Gaussian (identity)"
+  fam_lab <- paste0(toupper(substring(spec$label, 1, 1)), substring(spec$label, 2))
 
   lines <- c(
     "# Automated analysis summary",
@@ -232,47 +232,25 @@ run_auto_tableone_regressions <- function(
     sprintf("**Independent variables analysed**: %d", length(independent_variables)),
     sprintf("**Covariates (adjusted)**: %s", ifelse(length(covariates), paste(covariates, collapse = ", "), "(none)")),
     sprintf("**Incremental adjustment**: %s", ifelse(incremental, "Yes", "No")),
-    sprintf("**Risk difference estimated**: %s", ifelse(include_rd, "Yes", "No")),
+    sprintf("**Risk difference estimated**: %s", ifelse(rd_estimated, "Yes", "No")),
+    sprintf("**Risk ratio estimated**: %s", ifelse(rr_estimated, "Yes", "No")),
+    if (use_q) sprintf("**Multiple testing**: q-values from p.adjust(method = \"%s\") over each section's tests", p_adjust_method),
     ""
   )
 
-  # Top OR/Beta section
-  if (!is.null(top_or) && nrow(top_or)) {
-    effect_name <- if ("OR" %in% names(top_or)) "OR" else "Beta"
-    lines <- c(lines, sprintf("## Top %d associations by adjusted p-value (%s)", nrow(top_or), effect_name), "")
-    # Build bullets
-    bullets <- apply(top_or, 1, function(r) {
-      var   <- coalesce_chr(r[["Variable"]], "")
-      catg  <- coalesce_chr(r[["Category"]], "")
-      ptxt  <- fmt_p(suppressWarnings(as.numeric(r[["P_value"]])))
-      eff   <- suppressWarnings(as.numeric(r[[effect_name]]))
-      lo    <- suppressWarnings(as.numeric(r[["Lower"]]))
-      hi    <- suppressWarnings(as.numeric(r[["Upper"]]))
-      eff_str <- if (is.na(eff)) "NA" else sprintf("%.2f %s", eff, fmt_ci(lo, hi, 2))
-      # Show model/adjustment label if useful
-      lab <- if ("adjustment_label" %in% names(top_or)) coalesce_chr(r[["adjustment_label"]], "") else ""
-      lab <- if (nzchar(lab)) paste0(" [", lab, "]") else ""
-      paste0("- **", var, "** - ", catg, ": ", effect_name, "=", eff_str, ", p=", ptxt, lab)
-    })
-    lines <- c(lines, bullets, "")
+  # Model-estimate section (OR, RR, IRR or Beta), then marginal RDs and RRs
+  top_model <- top_rows(mm$plot_output)
+  if (!is.null(top_model) && nrow(top_model)) {
+    effect_name <- intersect(c("OR", "RR", "IRR", "Beta"), names(top_model))[1]
+    lines <- c(lines, sprintf("## Top %d associations by adjusted p-value (%s)", nrow(top_model), effect_name), "",
+               bullets(top_model, effect_name, 2), "")
   }
-
-  # Top RD section
-  if (include_rd && !is.null(top_rd) && nrow(top_rd)) {
-    lines <- c(lines, sprintf("## Top %d associations by adjusted p-value (Risk difference)", nrow(top_rd)), "")
-    bullets <- apply(top_rd, 1, function(r) {
-      var   <- coalesce_chr(r[["Variable"]], "")
-      catg  <- coalesce_chr(r[["Category"]], "")
-      ptxt  <- fmt_p(suppressWarnings(as.numeric(r[["P_value"]])))
-      rd    <- suppressWarnings(as.numeric(r[["RD"]]))
-      lo    <- suppressWarnings(as.numeric(r[["Lower"]]))
-      hi    <- suppressWarnings(as.numeric(r[["Upper"]]))
-      rd_str <- paste0(fmt_rd(rd, 3), " ", fmt_ci(lo, hi, 3))
-      lab <- if ("adjustment_label" %in% names(top_rd)) coalesce_chr(r[["adjustment_label"]], "") else ""
-      lab <- if (nzchar(lab)) paste0(" [", lab, "]") else ""
-      paste0("- **", var, "** - ", catg, ": RD=", rd_str, ", p=", ptxt, lab)
-    })
-    lines <- c(lines, bullets, "")
+  section_titles <- c(RD = "Risk difference", RR = "Marginal risk ratio")
+  for (m in c(if (rd_estimated) "RD", if (rr_estimated) "RR")) {
+    top_m <- top_rows(marginal_tables[[m]])
+    if (is.null(top_m) || !nrow(top_m) || !m %in% names(top_m)) next
+    lines <- c(lines, sprintf("## Top %d associations by adjusted p-value (%s)", nrow(top_m), section_titles[[m]]), "",
+               bullets(top_m, m, if (m == "RD") 3 else 2), "")
   }
 
   # Diagnostics snippet (optional)

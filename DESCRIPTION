@@ -1,35 +1,47 @@
 Package: OverReact
 Type: Package
 Title: Utility Package for Table One, Bulk Regressions, and Plot Themes
-Version: 0.1.0
-Author: Matthew Whitaker
-Maintainer: The package maintainer <yourself@somewhere.net>
+Version: 0.1.0.9000
+Authors@R:
+    person("Matthew", "Whitaker", email = "mw418@ic.ac.uk",
+           role = c("aut", "cre"))
 Description: Provides helper functions for epidemiology and statistical
     analysis workflows, including table one generation, automated bulk
     regression utilities, prevalence and odds ratio tables, and reusable
     ggplot2 themes and colour palettes.
-License: file LICENSE
+License: MIT + file LICENSE
 Encoding: UTF-8
-LazyData: true
 RoxygenNote: 7.3.2
-Suggests: 
+Depends:
+    R (>= 4.1.0)
+Suggests:
     data.table,
+    flextable,
+    gt,
+    knitr,
+    nnet,
+    rmarkdown,
+    sandwich,
     testthat (>= 3.0.0)
+VignetteBuilder: knitr
 Imports:
     dplyr,
     ggforce,
-    ggplot2,
+    ggplot2 (>= 3.5.0),
+    grDevices,
     MASS,
     methods,
     mgcv,
     openxlsx,
-    plyr,
-    prevalence,
-    questionr,
     readr,
+    rlang (>= 1.0.0),
     scales,
+    stats,
     stringr,
     tidyr,
+    tools,
+    utils,
+    withr,
     future,
     future.apply
 Config/testthat/edition: 3
