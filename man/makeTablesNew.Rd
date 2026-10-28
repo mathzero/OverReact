@@ -11,8 +11,8 @@ makeTablesNew(
   neg_val = "0",
   covariates = covs,
   cov_name_list,
-  sens = 0.844,
-  spec = 0.986,
+  sens = 1,
+  spec = 1,
   weights = NULL,
   suffix = NULL,
   sf = 4,
@@ -38,7 +38,8 @@ should be created.}
 \item{cov_name_list}{Optional named vector or list mapping variable names to
 display labels.}
 
-\item{sens}{Sensitivity used for the adjusted prevalence calculation.}
+\item{sens}{Sensitivity used for the adjusted prevalence calculation. The
+default of 1, with \code{spec = 1}, applies no assay correction.}
 
 \item{spec}{Specificity used for the adjusted prevalence calculation.}
 

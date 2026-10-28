@@ -36,6 +36,7 @@ run_auto_tableone_regressions <- function(
     include_rd = FALSE,              # auto: TRUE for binomial outcome, else FALSE
     ncores = NULL,
     n_sim = 100,
+    rd_ci_method = c("delta", "simulation"),
     glm_control = glm.control(maxit = 50),
     # ---- Pretty-printing / naming ----------------------------------------
     name_fun = NULL,                # optional prettifier; passed through to ModelMakerMultiRD
@@ -123,6 +124,7 @@ run_auto_tableone_regressions <- function(
     ncores                      = ncores,
     include_rd                  = include_rd,
     n_sim                       = n_sim,
+    rd_ci_method                = match.arg(rd_ci_method),
     savepath                    = save_dir,
     glm_control                 = glm_control,
     retry_failed                = TRUE,
@@ -140,26 +142,13 @@ run_auto_tableone_regressions <- function(
 
   # ---- 3) Build "short report" ------------------------------------------
   # Strategy:
-  #  * Identify the "fully adjusted" rows in plot_* (max adjustment count).
+  #  * Identify each Variable's "fully adjusted" rows in plot_* (its max adjustment count).
   #  * For each Variable, pick the level with the smallest p-value (excluding reference rows).
   #  * Summarise top_k by p-value (ORs/Beta and RDs if available).
 
-  # Determine which adjustment is "full"
-  full_adj <- NA_integer_
-  if (!is.null(plot_or_long) && nrow(plot_or_long)) {
-    if ("adjustment" %in% names(plot_or_long)) {
-      full_adj <- suppressWarnings(max(plot_or_long$adjustment, na.rm = TRUE))
-      if (!is.finite(full_adj)) full_adj <- NA_integer_
-    }
-  }
-  if (is.na(full_adj) && !is.null(plot_rd_long) && nrow(plot_rd_long)) {
-    if ("adjustment" %in% names(plot_rd_long)) {
-      full_adj <- suppressWarnings(max(plot_rd_long$adjustment, na.rm = TRUE))
-      if (!is.finite(full_adj)) full_adj <- NA_integer_
-    }
-  }
-
-  # Filter to full adjustment; include crude if nothing else exists
+  # Filter to each Variable's fullest adjustment; include crude if nothing else exists.
+  # The maximum is per Variable: a predictor that is also a covariate is never adjusted
+  # for itself, so it has fewer stages than the others and a global maximum would drop it.
   filter_full <- function(df) {
     if (is.null(df) || !nrow(df)) return(df)
     d <- df
@@ -172,8 +161,12 @@ run_auto_tableone_regressions <- function(
     if ("is_intercept" %in% names(d)) {
       d <- d[!ifelse(is.na(d$is_intercept), FALSE, d$is_intercept), , drop = FALSE]
     }
-    if (!is.na(full_adj) && "adjustment" %in% names(d)) {
-      d_full <- d[is.finite(d$adjustment) & d$adjustment == full_adj, , drop = FALSE]
+    if (all(c("adjustment", "Variable") %in% names(d)) && nrow(d)) {
+      adj <- suppressWarnings(as.numeric(d$adjustment))
+      full_adj <- ave(adj, d$Variable, FUN = function(a) {
+        if (all(is.na(a))) NA_real_ else max(a, na.rm = TRUE)
+      })
+      d_full <- d[!is.na(adj) & !is.na(full_adj) & adj == full_adj, , drop = FALSE]
       if (nrow(d_full)) return(d_full)
     }
     # fallback: crude only

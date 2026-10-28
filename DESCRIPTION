@@ -27,9 +27,11 @@ Imports:
     prevalence,
     questionr,
     readr,
+    rlang (>= 1.0.0),
     scales,
     stringr,
     tidyr,
+    withr,
     future,
     future.apply
 Config/testthat/edition: 3

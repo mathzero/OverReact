@@ -38,15 +38,18 @@ tableCont(dat, rowvar, colvar = NULL, weights = NULL,
     If \code{FALSE}, divide by the column total across displayed row levels.
     This spelling takes precedence if both spellings are supplied.}
   \item{weights}{Optional column of non-negative finite numeric weights.
-    Missing weights are excluded. Categorical cell counts are rounded to integers
-    before calculating percentages and confidence intervals.
+    Missing weights are excluded. Weighted categorical cell counts are rounded to
+    integers for display and percentages. Confidence intervals and chi-squared tests
+    use the Kish effective sample size, \code{sum(w)^2 / sum(w^2)}, of each
+    denominator, so they do not depend on the scale of the weights.
     Continuous summaries with weights raise an error; older versions silently ignored them.}
   \item{summary_stat}{\code{"mean"} for mean (SD), or \code{"median"} for median (IQR).}
   \item{comma_thousands}{Use comma separators in categorical counts.}
   \item{statistical_test}{Add Pearson chi-squared tests for categorical variables and
     one-way ANOVA for continuous variables (also when displaying medians).
     Tests use complete cases of the row and grouping variables, excluding empty levels.
-    These tests do not account for a survey sampling design.}
+    With weights, tests account for unequal weighting through the effective sample
+    size, but not for clustering or stratification.}
   \item{includeNAsColvar}{Display missing grouping values as a separate column.}
   \item{includeNAsRowvar}{Display missing categorical row values as a separate level.
     Continuous summaries always omit missing measurements.}

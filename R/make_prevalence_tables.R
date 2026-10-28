@@ -31,7 +31,8 @@
 #'   should be created.
 #' @param cov_name_list Optional named vector or list mapping variable names to
 #'   display labels.
-#' @param sens Sensitivity used for the adjusted prevalence calculation.
+#' @param sens Sensitivity used for the adjusted prevalence calculation. The
+#'   default of 1, with \code{spec = 1}, applies no assay correction.
 #' @param spec Specificity used for the adjusted prevalence calculation.
 #' @param weights Optional column name containing observation weights.
 #' @param suffix Optional suffix appended to output filenames when
@@ -55,8 +56,8 @@ makeTablesNew <- function(dat = dfRes,
                           neg_val = "0",
                           covariates = covs, # character vector naming variables to create tables for
                           cov_name_list,
-                          sens = 0.844,
-                          spec = 0.986,
+                          sens = 1,
+                          spec = 1,
                           weights = NULL,
                           suffix = NULL,
                           sf = 4,
@@ -80,6 +81,19 @@ makeTablesNew <- function(dat = dfRes,
 
 
 
+  # Code the outcome as a factor with both levels, so every table has a negative and a
+  # positive row (even when one is empty), named by neg_val and pos_val. Other outcome
+  # values, such as missing-data codes, are excluded.
+  pos_val <- as.character(pos_val)
+  neg_val <- as.character(neg_val)
+  result <- as.character(pull(dat, result_var))
+  keep <- !is.na(result) & result %in% c(pos_val, neg_val)
+  if (!any(keep)) {
+    stop("No values of '", result_var, "' match pos_val ('", pos_val,
+         "') or neg_val ('", neg_val, "').")
+  }
+  result <- factor(result[keep], levels = c(neg_val, pos_val))
+
   #  browser()
   rtn <- list()
   # i <- 1
@@ -87,34 +101,19 @@ makeTablesNew <- function(dat = dfRes,
 
     print(paste0("Now processing ", covariates[[i]]))
     # generate table of result_var by covariate[i]
+    covariate <- pull(dat, covariates[i])[keep]
     if(is.null(weights)){
-      tab <- table( pull(dat, result_var),  pull(dat, covariates[i]))
+      tab <- table(result, covariate)
     }
     else{
-      tab <- round(questionr::wtd.table(x=pull(dat, result_var),
-                             y=pull(dat, covariates[i]),
-                             weights = pull(dat, weights),
+      tab <- round(questionr::wtd.table(x=result,
+                             y=covariate,
+                             weights = pull(dat, weights)[keep],
                              normwt = F,
                              na.rm = T,
                              na.show = F),0)
     }
-
-
-    # for instances where there are only zeros or ones in the results (ie all pos or all neg)
-    if(dim(tab)[1] != 2){
-      nonmissing <- rownames(tab)
-      missing = setdiff(c("0","1"), nonmissing)
-      newtab <- (rep(0, ncol(tab)))
-      tab <- rbind(tab, missing = newtab)
-      rownames(tab) <- c(nonmissing, missing)
-    }
-
-    # reorder
-    tabnew <- as.data.frame.matrix(tab)
-    tabnew <- as.data.frame(tabnew[order(as.numeric(rownames(tabnew))),])
-    colnames(tabnew) <- colnames(tab)
-    rownames(tabnew) <- rownames(tab)
-    tab <- tabnew
+    tab <- as.data.frame.matrix(tab)
 
     # calculate prevalence and confidence intervals
     tab_ci <- add_conf_ints(tab,
@@ -143,8 +142,8 @@ makeTablesNew <- function(dat = dfRes,
                       Category =  rownames(tab_ci),
                       p = paste0(specifyDecimal(p*100, sf)," (",specifyDecimal(lb*100, sf),separator,specifyDecimal(ub*100, sf),")"),
                       p_adj = paste0(specifyDecimal(p_adj*100, sf)," (",specifyDecimal(lb_adj*100, sf),separator,specifyDecimal(ub_adj*100,sf),")")) %>%
-        dplyr::select(Variable, Category, `1`, all, p, p_adj) %>%
-        dplyr::rename("Positive" = "1", "Total" = "all", "Prevalence"=p,"Prevalence_adjusted" = "p_adj"
+        dplyr::select(Variable, Category, Positive = dplyr::all_of(pos_val), all, p, p_adj) %>%
+        dplyr::rename("Total" = "all", "Prevalence"=p,"Prevalence_adjusted" = "p_adj"
         )
     } else{
       if(percent){
@@ -154,8 +153,8 @@ makeTablesNew <- function(dat = dfRes,
                         p_adj = round(p_adj, sf)*100,
                         lb_adj = round(lb_adj, sf)*100,
                         ub_adj = round(ub_adj, sf)*100) %>%
-          dplyr::select(Variable, Category, `1`, all, p_adj, lb_adj, ub_adj) %>%
-          dplyr::rename("Positive" = "1", "Total" = "all", "Prevalence" = "p_adj",
+          dplyr::select(Variable, Category, Positive = dplyr::all_of(pos_val), all, p_adj, lb_adj, ub_adj) %>%
+          dplyr::rename("Total" = "all", "Prevalence" = "p_adj",
                         "Lower" = "lb_adj","Upper" = "ub_adj")
 
       } else{
@@ -165,8 +164,8 @@ makeTablesNew <- function(dat = dfRes,
                         p_adj = round(p_adj, sf),
                         lb_adj = round(lb_adj, sf),
                         ub_adj = round(ub_adj, sf)) %>%
-          dplyr::select(Variable, Category, `1`, all, p_adj, lb_adj, ub_adj) %>%
-          dplyr::rename("Positive" = "1", "Total" = "all", "Prevalence" = "p_adj",
+          dplyr::select(Variable, Category, Positive = dplyr::all_of(pos_val), all, p_adj, lb_adj, ub_adj) %>%
+          dplyr::rename("Total" = "all", "Prevalence" = "p_adj",
                         "Lower" = "lb_adj","Upper" = "ub_adj")
       }
     }
@@ -204,8 +203,8 @@ stratifiedTables <- function(dat = dfRes,
                              covariates = covs, # character vector naming variables to create tables for
                              cov_name_list,
                              strat_var,
-                             sens = 0.844,
-                             spec = 0.986,
+                             sens = 1,
+                             spec = 1,
                              weights = NULL,
                              suffix = NULL,
                              sf = 4,
@@ -225,9 +224,11 @@ stratifiedTables <- function(dat = dfRes,
 
   for (i in 1:length(uniques)){
     prevs <- makeTablesNew(dat=dat[dat[,strat_var]== uniques[[i]],],
-                           result_var = result_var, covariates = covariates,
+                           result_var = result_var, pos_val = pos_val, neg_val = neg_val,
+                           covariates = covariates,
                            sens = sens,spec = spec, cov_name_list = cov_name_list,
-                           output_list = F, sf = sf, weights = weights,separator = separator)
+                           output_list = F, sf = sf, weights = weights, percent = percent,
+                           separator = separator)
     prevs$prev_concat <- paste0(prevs$Prevalence," (",prevs$Lower,separator, prevs$Upper,")")
     result_list[[i]] <- prevs
   }

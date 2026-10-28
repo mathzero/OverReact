@@ -169,3 +169,26 @@ test_that("invalid inputs fail clearly and missing variables are skipped", {
   expect_message(out <- tableOne(dat, c("absent", "height"), "group"), "missing - omitted")
   expect_identical(out$Variable, c("Observations, n", "height, mean (SD)"))
 })
+
+test_that("weighted intervals and tests do not depend on the scale of the weights", {
+  set.seed(7)
+  dat <- data.frame(g = sample(c("A", "B"), 200, TRUE), c = sample(c("y", "n"), 200, TRUE))
+  without_counts <- function(x) sub("^[0-9]+ ", "", x)
+
+  # Constant weights summing to a population total carry no extra information.
+  unweighted <- tableCat(dat, "c", "g", statistical_test = TRUE, rowwise_percentages = FALSE)
+  dat$w <- 3e5
+  population <- tableCat(dat, "c", "g", weights = "w", statistical_test = TRUE,
+                         rowwise_percentages = FALSE)
+  expect_equal(population$`P-value`, unweighted$`P-value`)
+  for (col in c("Overall", "A", "B")) {
+    expect_identical(without_counts(population[[col]]), without_counts(unweighted[[col]]))
+  }
+
+  dat$w <- sample(1:3, nrow(dat), TRUE)
+  small <- tableCat(dat, "c", "g", weights = "w", statistical_test = TRUE)
+  dat$w <- dat$w * 1e4
+  large <- tableCat(dat, "c", "g", weights = "w", statistical_test = TRUE)
+  expect_equal(large$`P-value`, small$`P-value`)
+  expect_identical(without_counts(large$A), without_counts(small$A))
+})

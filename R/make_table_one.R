@@ -39,15 +39,31 @@
                     reserved = c("Variable", "Level", "Missing", "Overall", "P-value", "units", "V"))
 }
 
-.table_one_counts <- function(rows, groups, weights = NULL) {
+.table_one_counts <- function(rows, groups, weights = NULL, digits = 0) {
   tab <- table(rows, groups)
   if (!is.null(weights) && length(tab)) {
     # Explicit missing categories are ordinary factor levels; other NAs are excluded.
     valid <- !is.na(rows) & !is.na(groups) & !is.na(weights)
-    tab[] <- round(tapply(weights[valid], list(rows[valid], groups[valid]),
-                          sum, default = 0), 0)
+    sums <- tapply(weights[valid], list(rows[valid], groups[valid]), sum, default = 0)
+    tab[] <- if (is.null(digits)) sums else round(sums, digits)
   }
   tab
+}
+
+# Kish effective sample size, sum(w)^2 / sum(w^2): n for constant weights, smaller as
+# weights vary. Weighted inference uses it so results do not depend on the weights' scale.
+.kish_ess <- function(w) {
+  w <- w[!is.na(w)]
+  if (!length(w) || sum(w^2) <= 0) return(NA_real_)
+  sum(w)^2 / sum(w^2)
+}
+
+.wilson_interval <- function(p, n, z = qnorm(0.975)) {
+  if (is.na(n) || n <= 0) return(list(proportion = p, lower = NA_real_, upper = NA_real_))
+  z2 <- z^2
+  center <- (p + z2 / (2 * n)) / (1 + z2 / n)
+  margin <- z * sqrt((p * (1 - p) / n) + (z2 / (4 * n^2))) / (1 + z2 / n)
+  list(proportion = p, lower = center - margin, upper = center + margin)
 }
 
 .safe_chisq <- function(tab, rowvar, colvar) {
@@ -60,14 +76,19 @@
 }
 
 .table_one_cells <- function(counts, denominators, include_percentages,
-                             confint, comma_thousands) {
+                             confint, comma_thousands, ess = NULL) {
   vapply(seq_along(counts), function(i) {
     count <- if (comma_thousands) comma_sep(counts[i]) else as.character(counts[i])
     if (!include_percentages) return(count)
     n <- denominators[i]
     if (n <= 0) return(paste0(count, " (NA%)"))
     if (confint) {
-      ci <- calculate_prop_ci(as.numeric(counts[i]), as.numeric(n), method = "wilson")
+      # Weighted cells: weighted proportion, with the denominator's effective sample size.
+      ci <- if (is.null(ess)) {
+        calculate_prop_ci(as.numeric(counts[i]), as.numeric(n), method = "wilson")
+      } else {
+        .wilson_interval(as.numeric(counts[i]) / as.numeric(n), ess[i])
+      }
       sprintf("%s (%.1f%%, [%.1f-%.1f])", count, 100 * ci$proportion,
               100 * ci$lower, 100 * ci$upper)
     } else {
@@ -105,9 +126,17 @@ tableCat <- function(dat,
   overall_counts <- if (includeNAsColvar) totals else {
     rowSums(.table_one_counts(rows, .table_one_groups(dat, colvar, TRUE), w))
   }
+  # Effective sample sizes of each percentage denominator: row levels, groups, overall.
+  ess_rows <- ess_groups <- ess_overall <- NULL
+  if (!is.null(w)) {
+    in_table <- !is.na(rows) & !is.na(groups)
+    ess_rows <- vapply(levels(rows), function(l) .kish_ess(w[in_table & rows == l]), numeric(1))
+    ess_groups <- vapply(levels(groups), function(g) .kish_ess(w[in_table & groups == g]), numeric(1))
+    ess_overall <- rep(.kish_ess(w[!is.na(rows)]), length(overall_counts))
+  }
   overall <- .table_one_cells(overall_counts, rep(sum(overall_counts), length(overall_counts)),
                               include_percentages && !rowwise_percentages,
-                              confint, comma_thousands)
+                              confint, comma_thousands, ess_overall)
   tab <- data.frame(units = c(if (include_percentages) ", n (%)" else ", n",
                               rep(" ", nrow(counts))),
                     Level = c("", levels(rows)),
@@ -115,15 +144,24 @@ tableCat <- function(dat,
                     Overall = c("", overall), check.names = FALSE, stringsAsFactors = FALSE)
   for (j in seq_len(ncol(counts))) {
     denominators <- if (rowwise_percentages) totals else rep(sum(counts[, j]), nrow(counts))
+    ess <- if (is.null(w)) NULL else if (rowwise_percentages) ess_rows else rep(ess_groups[[j]], nrow(counts))
     tab[[levels(groups)[j]]] <- c("", .table_one_cells(counts[, j], denominators,
-                                                     include_percentages, confint, comma_thousands))
+                                                     include_percentages, confint, comma_thousands,
+                                                     ess))
   }
 
   if (statistical_test) {
     # Tests compare observed categories; displaying missing categories does not change inference.
     valid <- !is.na(as.character(dat[[rowvar]]))
     if (!is.null(colvar)) valid <- valid & !is.na(as.character(dat[[colvar]]))
-    test_counts <- .table_one_counts(rows[valid], groups[valid], if (is.null(w)) NULL else w[valid])
+    test_counts <- .table_one_counts(rows[valid], groups[valid], if (is.null(w)) NULL else w[valid],
+                                     digits = NULL)
+    if (!is.null(w)) {
+      # Rescale weighted counts to the effective sample size: weights describe the
+      # population, not extra observations, so their scale must not shrink the p-value.
+      ess <- .kish_ess(w[valid])
+      if (is.finite(ess) && sum(test_counts) > 0) test_counts <- test_counts * (ess / sum(test_counts))
+    }
     p <- .safe_chisq(test_counts, rowvar, colvar)$p.value
     tab$`P-value` <- c(p, rep(NA_real_, nrow(counts)))
   }
@@ -308,14 +346,9 @@ calculate_prop_ci <- function(x, n, method = "wilson") {
     upper <- min(upper, 1)
   } else if (method == "wilson") {
     # Wilson score interval
-    n <- n
-    z2 <- z^2
-    # Adjusted center
-    center <- (p_hat + z2 / (2 * n)) / (1 + z2 / n)
-    # Margin of error using the Wilson adjustment
-    margin <- z * sqrt((p_hat * (1 - p_hat) / n) + (z2 / (4 * n^2))) / (1 + z2 / n)
-    lower <- center - margin
-    upper <- center + margin
+    ci <- .wilson_interval(p_hat, n, z)
+    lower <- ci$lower
+    upper <- ci$upper
   } else {
     stop("Method must be either 'normal' or 'wilson'.")
   }

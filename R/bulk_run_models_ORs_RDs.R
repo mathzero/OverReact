@@ -116,89 +116,113 @@ makeORTable <- function(mod, ref_level = NULL, dp = 3) {
 # =============================================================================
 # 4. Risk-difference table builder --------------------------------------------
 # =============================================================================
-
-
+# Marginal (standardised) risk contrasts by g-computation over the analysis sample.
+# Factor exposures: mean risk with every row set to each level, minus mean risk with
+# every row set to the reference level. Numeric exposures: the average marginal effect,
+# i.e. the mean derivative of risk per one-unit increase, taken by central finite
+# difference so that splines and interactions are handled too. Intervals use the delta
+# method by default; ci_method = "simulation" uses n_sim multivariate-normal coefficient
+# draws instead. dp = NULL returns unrounded estimates.
 makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
-                        data = NULL, n_sim = 100, seed = 1) {
+                        data = NULL, n_sim = 100, seed = 1,
+                        ci_method = c("delta", "simulation")) {
+  ci_method <- match.arg(ci_method)
   na_tbl <- data.frame(Level = NA_character_, RD = NA_real_, Lower = NA_real_,
                        Upper = NA_real_, P_value = NA_real_,
                        stringsAsFactors = FALSE)
   if (is.null(mod) || inherits(mod, "try-error")) return(na_tbl)
   fam_is_binom <- tryCatch(mod$family$family == "binomial",
                            error = function(e) FALSE)
-  if (!fam_is_binom) return(na_tbl)
+  if (!isTRUE(fam_is_binom)) return(na_tbl)
   if (is.null(data)) data <- model.frame(mod)
   if (!variable_name %in% names(data)) return(na_tbl)
 
-  # Check for valid vcov matrix before proceeding
+  # Check for valid coefficients and vcov matrix before proceeding
+  beta_hat <- coef(mod)
   vcov_mat <- tryCatch(vcov(mod), error = function(e) NULL)
-  if (is.null(vcov_mat) || any(is.na(vcov_mat))) {
+  if (is.null(vcov_mat) || anyNA(vcov_mat) || anyNA(beta_hat)) {
     warning("Invalid variance-covariance matrix for RD calculation")
     return(na_tbl)
   }
 
-  get_X <- function(nd) model.matrix(delete.response(terms(mod)), data = nd)
-  # 1) factor exposure ---------------------------------------------------------
-  if (is.factor(data[[variable_name]])) {
-    lvls <- levels(data[[variable_name]])
-    if (is.null(ref_level) || !(ref_level %in% lvls)) ref_level <- lvls[1]
-    comp_lvls <- setdiff(lvls, ref_level)
-    new_ref <- data; new_ref[[variable_name]] <- factor(ref_level, levels = lvls)
-    X_ref <- get_X(new_ref)
-    beta_hat <- coef(mod)
-    lin_ref <- X_ref %*% beta_hat
-    risk_ref_hat <- mean(plogis(lin_ref))
-    set.seed(seed)
-    beta_sim <- tryCatch(MASS::mvrnorm(n_sim, mu = beta_hat, Sigma = vcov_mat),
-                         error = function(e) NULL)
-    if (is.null(beta_sim)) return(na_tbl)
+  # Standardise over rows that could have entered the fit, so passing the full dataset
+  # does not add rows the model never saw.
+  model_vars <- intersect(all.vars(formula(mod)), names(data))
+  if (length(model_vars)) {
+    data <- data[complete.cases(data[, model_vars, drop = FALSE]), , drop = FALSE]
+  }
+  if (!nrow(data)) return(na_tbl)
 
-    out <- vector("list", length(comp_lvls))
-    for (j in seq_along(comp_lvls)) {
-      lvl <- comp_lvls[j]
-      new_lvl <- data; new_lvl[[variable_name]] <- factor(lvl, levels = lvls)
-      X_lvl <- get_X(new_lvl)
-      lin_lvl <- X_lvl %*% beta_hat
-      risk_lvl_hat <- mean(plogis(lin_lvl))
-      rd_hat <- risk_lvl_hat - risk_ref_hat
-      lin_ref_sim <- X_ref %*% t(beta_sim)
-      lin_lvl_sim <- X_lvl %*% t(beta_sim)
-      risk_ref_sim <- colMeans(plogis(lin_ref_sim))
-      risk_lvl_sim <- colMeans(plogis(lin_lvl_sim))
-      rd_sim <- risk_lvl_sim - risk_ref_sim
-      ci <- quantile(rd_sim, c(.025, .975), na.rm = TRUE)
+  tt <- delete.response(terms(mod))
+  get_X <- function(nd) {
+    model.matrix(tt, data = nd, xlev = mod$xlevels, contrasts.arg = mod$contrasts)
+  }
+  linkinv <- mod$family$linkinv
+  mu_eta <- mod$family$mu.eta
+  beta_sim <- NULL
+  if (identical(ci_method, "simulation")) {
+    # with_seed() keeps the draws reproducible without resetting the caller's RNG stream.
+    beta_sim <- tryCatch(
+      withr::with_seed(seed, matrix(MASS::mvrnorm(n_sim, mu = beta_hat, Sigma = vcov_mat),
+                                    nrow = n_sim)),
+      error = function(e) NULL
+    )
+    if (is.null(beta_sim)) return(na_tbl)
+  }
+
+  # Difference in mean risk between two counterfactual design matrices, per `scale` units.
+  contrast_row <- function(level, X1, X0, scale = 1) {
+    eta1 <- drop(X1 %*% beta_hat)
+    eta0 <- drop(X0 %*% beta_hat)
+    rd_hat <- mean(linkinv(eta1) - linkinv(eta0)) / scale
+    if (is.null(beta_sim)) {
+      grad <- (colMeans(mu_eta(eta1) * X1) - colMeans(mu_eta(eta0) * X0)) / scale
+      se_rd <- sqrt(drop(crossprod(grad, vcov_mat %*% grad)))
+      ci <- rd_hat + c(-1, 1) * qnorm(0.975) * se_rd
+    } else {
+      rd_sim <- (colMeans(linkinv(X1 %*% t(beta_sim))) -
+                   colMeans(linkinv(X0 %*% t(beta_sim)))) / scale
+      ci <- quantile(rd_sim, c(.025, .975), na.rm = TRUE, names = FALSE)
       se_rd <- sd(rd_sim, na.rm = TRUE)
-      z_rd <- rd_hat / se_rd
-      p_rd <- 2 * (1 - pnorm(abs(z_rd)))
-      out[[j]] <- data.frame(Level = lvl, RD = round(rd_hat, dp),
-                             Lower = round(ci[1], dp), Upper = round(ci[2], dp),
-                             P_value = round(p_rd, 5), stringsAsFactors = FALSE)
     }
+    out <- data.frame(Level = level, RD = rd_hat, Lower = ci[1], Upper = ci[2],
+                      P_value = 2 * pnorm(-abs(rd_hat / se_rd)),
+                      stringsAsFactors = FALSE)
+    if (!is.null(dp)) {
+      out[c("RD", "Lower", "Upper")] <- lapply(out[c("RD", "Lower", "Upper")], round, dp)
+    }
+    out
+  }
+
+  exposure <- data[[variable_name]]
+  # 1) factor exposure ---------------------------------------------------------
+  if (is.factor(exposure) || is.character(exposure)) {
+    lvls <- mod$xlevels[[variable_name]]
+    if (is.null(lvls)) lvls <- levels(factor(exposure))
+    if (is.null(ref_level) || !(ref_level %in% lvls)) ref_level <- lvls[1]
+    set_level <- function(lvl) {
+      nd <- data
+      nd[[variable_name]] <- factor(rep(lvl, nrow(nd)), levels = lvls)
+      nd
+    }
+    X_ref <- get_X(set_level(ref_level))
+    out <- lapply(setdiff(lvls, ref_level), function(lvl) {
+      contrast_row(lvl, get_X(set_level(lvl)), X_ref)
+    })
+    if (!length(out)) return(na_tbl)
     return(do.call(rbind, out))
   }
-  # 2) numeric / ordered exposure --------------------------------------------
-  if (is.numeric(data[[variable_name]]) || is.ordered(data[[variable_name]])) {
-    X <- model.matrix(delete.response(terms(mod)), data = data)
-    beta_hat <- coef(mod)
-    p_hat <- plogis(X %*% beta_hat)
-    col_id <- grep(paste0("^", variable_name), colnames(X))
-    if (length(col_id) == 0) return(na_tbl)
-    ame_hat <- mean(p_hat * (1 - p_hat) * X[, col_id, drop = FALSE])
-    set.seed(seed)
-    beta_sim <- tryCatch(MASS::mvrnorm(n_sim, mu = beta_hat, Sigma = vcov_mat),
-                         error = function(e) NULL)
-    if (is.null(beta_sim)) return(na_tbl)
-
-    lin_sim <- X %*% t(beta_sim)
-    p_sim <- plogis(lin_sim)
-    ame_sim <- colMeans(p_sim * (1 - p_sim) * X[, col_id])
-    ci_ame <- quantile(ame_sim, c(.025, .975), na.rm = TRUE)
-    se_ame <- sd(ame_sim, na.rm = TRUE)
-    z_ame <- ame_hat / se_ame
-    p_ame <- 2 * (1 - pnorm(abs(z_ame)))
-    return(data.frame(Level = variable_name, RD = round(ame_hat, dp),
-                      Lower = round(ci_ame[1], dp), Upper = round(ci_ame[2], dp),
-                      P_value = round(p_ame, 5), stringsAsFactors = FALSE))
+  # 2) numeric exposure: average marginal effect per one-unit increase ----------
+  if (is.numeric(exposure)) {
+    h <- 1e-4 * sd(exposure)
+    if (!is.finite(h) || h <= 0) h <- 1e-4
+    shift_exposure <- function(delta) {
+      nd <- data
+      nd[[variable_name]] <- nd[[variable_name]] + delta
+      nd
+    }
+    return(contrast_row(variable_name, get_X(shift_exposure(h / 2)),
+                        get_X(shift_exposure(-h / 2)), scale = h))
   }
   na_tbl
 }
@@ -230,8 +254,10 @@ modelMakerSequentialRD <- function(variable_name,
                                    include_rd              = FALSE,
                                    n_sim                   = 100,
                                    glm_control             = glm.control(maxit = 50),
-                                   sample_strategy         = c("common_per_predictor", "per_model")) {
+                                   sample_strategy         = c("common_per_predictor", "per_model"),
+                                   rd_ci_method            = c("delta", "simulation")) {
   sample_strategy <- match.arg(sample_strategy)
+  rd_ci_method <- match.arg(rd_ci_method)
 
   found_adj <- intersect(joint_adjustment_vars, names(data))
   missing_adj <- setdiff(joint_adjustment_vars, names(data))
@@ -256,7 +282,8 @@ modelMakerSequentialRD <- function(variable_name,
     include_rd = include_rd,
     n_sim = n_sim,
     glm_control = glm_control,
-    sample_strategy = sample_strategy
+    sample_strategy = sample_strategy,
+    rd_ci_method = rd_ci_method
   )
 
   rename_cols <- function(df, suffix) {
@@ -461,18 +488,19 @@ modelMakerSequentialRD <- function(variable_name,
 
 # Always returns a [reference] row for categorical exposures in RD output
 safe_makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
-                             data = NULL, n_sim = 100, seed = 1) {
+                             data = NULL, n_sim = 100, seed = 1,
+                             ci_method = c("delta", "simulation")) {
+  ci_method <- match.arg(ci_method)
   out <- tryCatch(
     makeRDTable(mod = mod, variable_name = variable_name, ref_level = ref_level,
-                dp = dp, data = data, n_sim = n_sim, seed = seed),
+                dp = dp, data = data, n_sim = n_sim, seed = seed, ci_method = ci_method),
     error = function(e) { message("Risk-difference table failed: ", e$message); NULL }
   )
   if (is.null(out)) return(NULL)
 
   # Inject a [reference] row for categorical exposures if missing
-  mf <- tryCatch(model.frame(mod), error = function(e) NULL)
-  if (!is.null(mf) && variable_name %in% names(mf) && is.factor(mf[[variable_name]])) {
-    lvls <- levels(mf[[variable_name]])
+  lvls <- tryCatch(mod$xlevels[[variable_name]], error = function(e) NULL)
+  if (!is.null(lvls)) {
     if (is.null(ref_level) || !(ref_level %in% lvls)) ref_level <- lvls[1]
     ref_lbl <- paste0(ref_level, " [reference]")
     if (!any(grepl("\\[reference\\]$", out$Level))) {
@@ -514,12 +542,12 @@ compute_level_order <- function(x, ref_level = NULL) {
 # Helpers for robust parallel with restart
 # ---------------------------------------------------------------------
 
-.collect_completed <- function(vars, savepath_runs, include_rd) {
+.collect_completed <- function(vars, savepath_runs, include_rd, spec_hashes = NULL) {
   out <- list()
   if (is.null(savepath_runs) || !length(vars)) return(out)
   for (v in vars) {
     fmap <- .var_filemap(savepath_runs, .sanitize_var_id(v), include_rd = include_rd)
-    if (.has_complete_outputs(fmap)) out[[v]] <- .load_var_outputs(fmap)
+    if (.has_complete_outputs(fmap, spec_hash = spec_hashes[[v]])) out[[v]] <- .load_var_outputs(fmap)
   }
   out
 }
@@ -531,7 +559,8 @@ compute_level_order <- function(x, ref_level = NULL) {
                                     ncores,
                                     parallel_restarts = 2,
                                     shrink_workers_on_retry = TRUE,
-                                    retry_sleep = 1) {
+                                    retry_sleep = 1,
+                                    spec_hashes = NULL) {
   computed  <- list()
   remaining <- todo_vars
   if (!length(remaining)) return(computed)
@@ -607,7 +636,7 @@ compute_level_order <- function(x, ref_level = NULL) {
     }
 
     # Harvest any completions from disk and shrink the todo set
-    newly <- .collect_completed(remaining, savepath_runs, include_rd)
+    newly <- .collect_completed(remaining, savepath_runs, include_rd, spec_hashes)
     if (length(newly)) {
       message("Recovered completed variables from disk: ", paste(names(newly), collapse = ", "))
       for (nm in names(newly)) computed[[nm]] <- newly[[nm]]
@@ -705,11 +734,17 @@ compute_level_order <- function(x, ref_level = NULL) {
     plot_or_rds  = file.path(var_dir, "plot_or.rds"),
     df_rd_rds    = if (isTRUE(include_rd)) file.path(var_dir, "df_rd.rds") else NULL,
     plot_rd_rds  = if (isTRUE(include_rd)) file.path(var_dir, "plot_rd.rds") else NULL,
-    diag_rds     = file.path(var_dir, "diagnostics.rds")
+    diag_rds     = file.path(var_dir, "diagnostics.rds"),
+    spec_rds     = file.path(var_dir, "spec.rds")
   )
 }
 
-.has_complete_outputs <- function(filemap) {
+# With spec_hash, outputs only count as complete if they were saved for the same model
+# specification and data; otherwise a changed run would silently reuse stale results.
+.has_complete_outputs <- function(filemap, spec_hash = NULL) {
+  if (!is.null(spec_hash) && !identical(.robust_read_rds(filemap$spec_rds), spec_hash)) {
+    return(FALSE)
+  }
   req <- c(filemap$df_or_rds, filemap$plot_or_rds, filemap$df_rd_rds, filemap$plot_rd_rds)
   req <- req[!sapply(req, is.null)]
   if (length(req) && all(file.exists(req))) {
@@ -724,8 +759,11 @@ compute_level_order <- function(x, ref_level = NULL) {
   all(is.finite(sizes) & !is.na(sizes) & sizes > 0)
 }
 
-.save_var_outputs <- function(filemap, out, diagnostics = NULL, write_csv = TRUE) {
+.save_var_outputs <- function(filemap, out, diagnostics = NULL, write_csv = TRUE,
+                              spec_hash = NULL) {
   .safe_dir_create(filemap$dir)
+  # The spec file is written last, so an interrupted save never looks complete.
+  if (file.exists(filemap$spec_rds)) unlink(filemap$spec_rds)
   .atomic_write_rds(out$tidy_res_or,  filemap$df_or_rds)
   .atomic_write_rds(out$tidy_plot_or, filemap$plot_or_rds)
   if (!is.null(filemap$df_rd_rds))  .atomic_write_rds(out$tidy_res_rd,  filemap$df_rd_rds)
@@ -739,6 +777,7 @@ compute_level_order <- function(x, ref_level = NULL) {
     if (!is.null(filemap$plot_rd_csv) && !is.null(out$tidy_plot_rd) && nrow(out$tidy_plot_rd)) .atomic_write_csv(out$tidy_plot_rd, filemap$plot_rd_csv)
     if (!is.null(diagnostics) && nrow(diagnostics)) .atomic_write_csv(diagnostics, filemap$diag_csv)
   }
+  if (!is.null(spec_hash)) .atomic_write_rds(spec_hash, filemap$spec_rds)
   invisible(TRUE)
 }
 
@@ -804,8 +843,10 @@ modelMakerAdjustedSetsRD <- function(variable_name,
                                      include_rd              = FALSE,
                                      n_sim                   = 100,
                                      glm_control             = glm.control(maxit = 50),
-                                     sample_strategy         = c("common_per_predictor", "per_model")) {
+                                     sample_strategy         = c("common_per_predictor", "per_model"),
+                                     rd_ci_method            = c("delta", "simulation")) {
   sample_strategy <- match.arg(sample_strategy)
+  rd_ci_method <- match.arg(rd_ci_method)
 
   if (!is.data.frame(data)) stop("data must be a data.frame")
   if (!all(c(variable_name, outcome) %in% names(data))) {
@@ -873,7 +914,8 @@ modelMakerAdjustedSetsRD <- function(variable_name,
 
   rd_rows <- data.frame()
   if (isTRUE(include_rd) && identical(runner$family, "binomial")) {
-    rd_parts <- lapply(runner$stages, .react_extract_rd_rows, predictor = variable_name, n_sim = n_sim, dp = 3)
+    rd_parts <- lapply(runner$stages, .react_extract_rd_rows, predictor = variable_name,
+                       n_sim = n_sim, dp = NULL, ci_method = rd_ci_method)
     rd_rows <- dplyr::bind_rows(rd_parts)
   }
   df_rd <- if (nrow(rd_rows)) {
@@ -955,8 +997,10 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
                               # NEW: robustness for future backend
                               parallel_restarts = 2,
                               retry_sleep = 1,
-                              sample_strategy = c("common_per_predictor", "per_model")) {
+                              sample_strategy = c("common_per_predictor", "per_model"),
+                              rd_ci_method = c("delta", "simulation")) {
   sample_strategy <- match.arg(sample_strategy)
+  rd_ci_method <- match.arg(rd_ci_method)
 
   if (!is.data.frame(dat)) stop("dat must be a data.frame")
   if (!outcome %in% names(dat)) stop(paste("Outcome", outcome, "not found"))
@@ -1006,11 +1050,9 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
     sets
   }
 
-  # ---------- per-variable worker (unchanged modelling logic) --------------
-  single_var_runner <- function(pred_name, save_immediately = TRUE) {
-    ref_lv <- if (is.factor(dat[[pred_name]]) && !is.ordered(dat[[pred_name]])) levels(dat[[pred_name]])[1] else NULL
+  sets_for <- function(pred_name) {
     pred_adjusters <- setdiff(joint_adjustment_vars, pred_name)
-    sets <- if (isTRUE(incremental)) {
+    if (isTRUE(incremental)) {
       build_cumulative_sets(pred_adjusters)
     } else {
       if (is.null(adj_sets)) list(full = pred_adjusters) else {
@@ -1021,6 +1063,34 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
         lapply(sets_local, function(x) setdiff(x, pred_name))
       }
     }
+  }
+
+  # --- checkpoint fingerprints ---------------------------------------------
+  # Everything that determines a predictor's results, including its data columns, so
+  # checkpoints are reused only for an identical specification and identical data.
+  # Hashes are computed once here, not on parallel workers.
+  spec_hash_for <- function(pred_name) {
+    sets <- sets_for(pred_name)
+    cols <- intersect(unique(c(outcome, pred_name, unlist(sets, use.names = FALSE))), names(dat))
+    rlang::hash(list(
+      outcome = outcome, predictor = pred_name, sets = sets,
+      include_crude = include_crude, include_rd = include_rd, n_sim = n_sim,
+      rd_ci_method = rd_ci_method, sample_strategy = sample_strategy,
+      glm_control = glm_control, retry_failed = retry_failed, max_retries = max_retries,
+      sf = sf, format = format, simpleround = simpleround,
+      remove_intercept_from_results = remove_intercept_from_results,
+      data = stats::setNames(lapply(cols, function(v) dat[[v]]), cols)
+    ))
+  }
+  spec_hashes <- NULL
+  if (!is.null(savepath_runs)) {
+    spec_hashes <- vapply(list_of_variables_of_interest, spec_hash_for, character(1))
+  }
+
+  # ---------- per-variable worker (unchanged modelling logic) --------------
+  single_var_runner <- function(pred_name, save_immediately = TRUE) {
+    ref_lv <- if (is.factor(dat[[pred_name]]) && !is.ordered(dat[[pred_name]])) levels(dat[[pred_name]])[1] else NULL
+    sets <- sets_for(pred_name)
 
     adj_map <- data.frame(
       adjustment_label = names(sets),
@@ -1036,7 +1106,8 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
                                  adj_sets = sets, include_crude = include_crude,
                                  include_rd = include_rd, n_sim = n_sim,
                                  glm_control = ctrl,
-                                 sample_strategy = sample_strategy),
+                                 sample_strategy = sample_strategy,
+                                 rd_ci_method = rd_ci_method),
         error = function(e) e
       )
       if (inherits(res, "error")) {
@@ -1151,7 +1222,8 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
     if (isTRUE(save_immediately) && !is.null(savepath_runs)) {
       var_id  <- .sanitize_var_id(pred_name)
       fmap    <- .var_filemap(savepath_runs, var_id, include_rd = include_rd)
-      .save_var_outputs(fmap, out, diagnostics = all_diag, write_csv = TRUE)
+      .save_var_outputs(fmap, out, diagnostics = all_diag, write_csv = TRUE,
+                        spec_hash = spec_hashes[[pred_name]])
     }
     out
   }
@@ -1161,7 +1233,12 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
   completed <- logical(length(var_ids))
   if (!is.null(savepath_runs)) {
     for (i in seq_along(var_ids)) {
-      completed[i] <- .has_complete_outputs(.var_filemap(savepath_runs, var_ids[i], include_rd = include_rd))
+      fmap <- .var_filemap(savepath_runs, var_ids[i], include_rd = include_rd)
+      completed[i] <- .has_complete_outputs(fmap, spec_hash = spec_hashes[[i]])
+      if (!completed[i] && .has_complete_outputs(fmap)) {
+        message("Checkpoint for '", list_of_variables_of_interest[i],
+                "' was saved for a different specification or data; recomputing.")
+      }
     }
   } else {
     completed[] <- FALSE
@@ -1185,7 +1262,8 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
                                       ncores = ncores,
                                       parallel_restarts = parallel_restarts,
                                       shrink_workers_on_retry = TRUE,
-                                      retry_sleep = retry_sleep)
+                                      retry_sleep = retry_sleep,
+                                      spec_hashes = spec_hashes)
 
   # ---------- assemble final outputs ---------------------------------------
   results_by_raw <- preloaded

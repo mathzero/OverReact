@@ -170,10 +170,13 @@
     coef_tab$Upper <- exp(coef_tab$Upper)
   }
 
-  coef_tab$OR <- round(coef_tab$OR, dp)
-  coef_tab$Lower <- round(coef_tab$Lower, dp)
-  coef_tab$Upper <- round(coef_tab$Upper, dp)
-  coef_tab$P_value <- round(coef_tab$P_value, 5)
+  # dp = NULL keeps full precision (per-unit effects of wide-range predictors would
+  # otherwise round to 1). P-values are never rounded, so tiny values do not become 0.
+  if (!is.null(dp)) {
+    coef_tab$OR <- round(coef_tab$OR, dp)
+    coef_tab$Lower <- round(coef_tab$Lower, dp)
+    coef_tab$Upper <- round(coef_tab$Upper, dp)
+  }
   coef_tab$Level <- coef_tab$term_raw
   coef_tab$is_reference <- FALSE
   coef_tab$is_intercept <- coef_tab$term_raw == "(Intercept)"
@@ -218,8 +221,9 @@
   match(predictor, clean_labels)
 }
 
-.react_extract_predictor_rows <- function(fit, predictor, ref_level = NULL, include_intercept = TRUE) {
-  coef_tab <- .react_build_coef_table(fit, ref_level = NULL)
+.react_extract_predictor_rows <- function(fit, predictor, ref_level = NULL, include_intercept = TRUE,
+                                          level_order = NULL) {
+  coef_tab <- .react_build_coef_table(fit, ref_level = NULL, dp = NULL)
   if (!nrow(coef_tab)) return(coef_tab)
 
   model_frame <- tryCatch(stats::model.frame(fit), error = function(e) NULL)
@@ -255,7 +259,9 @@
 
   if (is_categorical) {
     predictor_ref <- .react_reference_level(model_frame[[predictor]], ref_level = ref_level)
-    lvls <- levels(model_frame[[predictor]])
+    # level_order is the predictor's full level set, so a level absent from this model
+    # does not shift the rows of the levels after it.
+    lvls <- if (is.null(level_order)) levels(model_frame[[predictor]]) else level_order
     ref_row <- data.frame(
       Level = paste0(predictor_ref, " [reference]"),
       term_raw = NA_character_,
@@ -309,7 +315,8 @@
   )
 }
 
-.react_extract_rd_rows <- function(stage_meta, predictor, n_sim = 100, dp = 3) {
+.react_extract_rd_rows <- function(stage_meta, predictor, n_sim = 100, dp = 3,
+                                   ci_method = "delta") {
   if (is.null(stage_meta$fit)) return(data.frame())
   if (!identical(stage_meta$model_family, "binomial")) return(data.frame())
 
@@ -319,7 +326,8 @@
     ref_level = stage_meta$ref_level,
     dp = dp,
     data = stage_meta$data,
-    n_sim = n_sim
+    n_sim = n_sim,
+    ci_method = ci_method
   )
   if (is.null(rd_tab) || !nrow(rd_tab)) return(data.frame())
 
@@ -331,7 +339,7 @@
 
   if (is_categorical) {
     predictor_ref <- .react_reference_level(stage_meta$data[[predictor]], ref_level = stage_meta$ref_level)
-    lvls <- levels(stage_meta$data[[predictor]])
+    lvls <- if (is.null(stage_meta$levels)) levels(stage_meta$data[[predictor]]) else stage_meta$levels
     rd_tab$row_order <- match(rd_tab$Level, c(paste0(predictor_ref, " [reference]"), setdiff(lvls, predictor_ref)))
     rd_tab$term_raw <- ifelse(
       grepl("\\[reference\\]$", rd_tab$Level),
@@ -415,6 +423,18 @@
     }
   }
 
+  # One reference level and level order per predictor, taken from its largest analysis
+  # sample. Stages are relevelled to it so they all report the same contrasts; a per-model
+  # sample that has lost the reference level is reported as a failed stage instead of
+  # silently switching to another reference.
+  predictor_frame <- if (is.null(common_data)) {
+    .react_prepare_analysis_frame(data, unique(c(outcome, predictor)), drop_missing = TRUE)
+  } else {
+    common_data
+  }
+  predictor_ref <- .react_reference_level(predictor_frame[[predictor]], ref_level = ref_level)
+  predictor_levels <- if (is.null(predictor_ref)) NULL else levels(predictor_frame[[predictor]])
+
   rows_by_stage <- vector("list", length(stage_specs))
   stage_meta <- vector("list", length(stage_specs))
   diagnostics <- vector("list", length(stage_specs))
@@ -433,11 +453,17 @@
     }
 
     fit_res <- list(fit = NULL, warnings = character(), error = "No complete cases available.")
-    predictor_ref <- NULL
     if (nrow(stage_data)) {
-      predictor_ref <- .react_reference_level(stage_data[[predictor]], ref_level = ref_level)
-      formula <- .react_reformulate_safe(c(predictor, stage$adjusted_vars), response = outcome)
-      fit_res <- .react_fit_glm_captured(formula, data = stage_data, family = model_family, control = glm_control)
+      if (!is.null(predictor_ref) && !predictor_ref %in% levels(stage_data[[predictor]])) {
+        fit_res$error <- paste0("Reference level '", predictor_ref, "' of '", predictor,
+                                "' has no observations in this stage's sample.")
+      } else {
+        if (!is.null(predictor_ref)) {
+          stage_data[[predictor]] <- stats::relevel(stage_data[[predictor]], ref = predictor_ref)
+        }
+        formula <- .react_reformulate_safe(c(predictor, stage$adjusted_vars), response = outcome)
+        fit_res <- .react_fit_glm_captured(formula, data = stage_data, family = model_family, control = glm_control)
+      }
     }
 
     fit_obj <- fit_res$fit
@@ -456,6 +482,7 @@
       fit = fit_obj,
       data = stage_data,
       ref_level = predictor_ref,
+      levels = predictor_levels,
       model = stage$model,
       stage_id = stage$stage_id,
       wide_col = stage$wide_col,
@@ -473,7 +500,8 @@
       fit = fit_obj,
       predictor = predictor,
       ref_level = predictor_ref,
-      include_intercept = include_intercept
+      include_intercept = include_intercept,
+      level_order = predictor_levels
     )
     if (!nrow(stage_rows)) {
       rows_by_stage[[i]] <- stage_rows

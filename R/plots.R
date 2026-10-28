@@ -291,7 +291,7 @@ plotReactVIF <- function(vif_df,
     stop("Models passed to plotReactForest() must inherit from lm, glm, or gam.")
   }
 
-  coef_tab <- as.data.frame(makeORTable(model, ref_level = NULL), stringsAsFactors = FALSE)
+  coef_tab <- as.data.frame(makeORTable(model, ref_level = NULL, dp = NULL), stringsAsFactors = FALSE)
   if (!nrow(coef_tab)) {
     stop("The supplied model did not return any coefficients to plot.")
   }
@@ -692,6 +692,20 @@ plotReactForest <- function(univ_df_plot,
   if (!identical(effect_name, "OR") && identical(xrange, c(0.25, 16))) {
     xrange <- NULL
   }
+  if (identical(effect_name, "OR") && is.null(xrange)) xrange <- c(0.25, 16)
+
+  # xrange zooms the coordinate system instead of limiting the scale: scale limits turn
+  # out-of-range estimates and bounds into NA, and the layers then silently drop them.
+  if (!is.null(xrange)) {
+    plotted <- c(plot_df$effect_value, plot_df$Lower, plot_df$Upper)
+    n_clipped <- sum(plotted < xrange[[1]] | plotted > xrange[[2]], na.rm = TRUE)
+    if (n_clipped) {
+      warning(sprintf(
+        "%d estimate(s) or interval bound(s) fall outside xrange = c(%s, %s) and are clipped at the panel edge; widen `xrange` to show them in full.",
+        n_clipped, format(xrange[[1]]), format(xrange[[2]])
+      ), call. = FALSE)
+    }
+  }
 
   p <- ggplot2::ggplot(
     plot_df,
@@ -724,7 +738,7 @@ plotReactForest <- function(univ_df_plot,
       linewidth = 0.2,
       na.rm = TRUE
     ) +
-    ggplot2::coord_flip() +
+    ggplot2::coord_flip(ylim = xrange) +
     ggplot2::scale_shape_manual(values = c(light = 0, dark = 15), guide = "none") +
     ggforce::facet_col(
       facets = ggplot2::vars(Variable),
@@ -756,16 +770,12 @@ plotReactForest <- function(univ_df_plot,
     ggplot2::scale_alpha_manual(values = c(dark = 1, light = 0.3), guide = "none")
 
   if (identical(effect_name, "OR")) {
-    if (is.null(xrange)) xrange <- c(0.25, 16)
     breaks <- 2 ^ seq(log2(xrange[[1]]), log2(xrange[[2]]))
     p <- p + ggplot2::scale_y_continuous(
       trans = "log2",
       labels = function(x) MASS::fractions(x),
-      breaks = breaks,
-      limits = xrange
+      breaks = breaks
     )
-  } else {
-    p <- p + ggplot2::scale_y_continuous(limits = xrange)
   }
 
   if (exists("scale_color_imperial", mode = "function")) {

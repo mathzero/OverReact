@@ -112,8 +112,12 @@ and non-parametric alternatives are not selected automatically.
 `confint = TRUE` adds 95% Wilson intervals to categorical percentages;
 `formatPvalsForEpiPaper = TRUE` formats available p-values with asterisks.
 Categorical weights must name a non-negative finite numeric column; missing
-weights are excluded and cell totals are rounded before interval calculation.
-Weighted continuous summaries are unsupported and raise an error.
+weights are excluded and weighted cell totals are rounded for display. Weighted
+intervals and chi-squared tests use the Kish effective sample size,
+`sum(w)^2 / sum(w^2)`, of each denominator rather than the weighted total, so
+rescaling the weights does not change them and constant weights reproduce the
+unweighted results. This accounts for unequal weighting only, not clustering or
+stratification. Weighted continuous summaries are unsupported and raise an error.
 
 See [the table documentation](man/tableOne.Rd) and
 [implementation](R/make_table_one.R).
@@ -127,8 +131,8 @@ See [the table documentation](man/tableOne.Rd) and
 | `modelMakerSequential()` | Fit one predictor with sequential adjustment. Returns `model_df`, `model_df_predictorORs_only`, `crude_model_output`, `adj_model_outputs` and diagnostics. |
 | `modelMakerSequentialRD()` | Fit one predictor with cumulative adjustment and optional risk differences. Returns separate OR and RD tables, crude and adjusted results, diagnostics and sample counts. |
 | `modelMakerAdjustedSetsRD()` | Fit one predictor using named `adj_sets`. Returns `model_df_ORs`, `model_df_RDs`, `crude_model_OR`, `crude_model_RD`, `adj_or_outputs`, `adj_rd_outputs`, `diagnostics` and sample counts. |
-| `makeORTable()` | Extract coefficients, 95% normal-approximation Wald intervals and model-summary p-values from a fitted model. Binomial coefficients are exponentiated; other coefficients retain their original scale. Optional reference rows and term metadata are included. |
-| `makeRDTable()` | Estimate marginal risk contrasts for factor predictors in a binomial model. Returns `Level`, `RD`, `Lower`, `Upper` and `P_value`; intervals use multivariate-normal coefficient simulation. Numeric-predictor output has a legacy limitation described below. |
+| `makeORTable()` | Extract coefficients, 95% normal-approximation Wald intervals and model-summary p-values from a fitted model. Binomial coefficients are exponentiated; other coefficients retain their original scale. Optional reference rows and term metadata are included; `dp = NULL` returns unrounded estimates. |
+| `makeRDTable()` | Estimate marginal risk differences for a factor or numeric predictor in a binomial model, as described below. Returns `Level`, `RD`, `Lower`, `Upper` and `P_value`; intervals use the delta method, or coefficient simulation with `ci_method = "simulation"`. |
 | `safe_makeRDTable()` | Wrap `makeRDTable()` with error capture and an explicit reference row for factor predictors. Returns `NULL` on a caught error. |
 
 The modelling wrappers select a binomial logit model when the outcome has two
@@ -146,7 +150,6 @@ models <- ModelMakerMultiRD(
   adj_sets = list(demographic = c("age", "sex")),
   include_crude = TRUE,
   include_rd = TRUE,
-  n_sim = 1000,
   sample_strategy = "common_per_predictor",
   ncores = 1
 )
@@ -162,7 +165,12 @@ predictor is removed from its own adjustment set. The default
 `sample_strategy = "common_per_predictor"` uses complete cases across that
 predictor, the outcome and all its requested adjusters, preserving a common
 sample across adjustment stages. `"per_model"` permits the sample to vary by
-stage. Different predictors may still have different analysis samples.
+stage. Different predictors may still have different analysis samples. Each
+predictor's reference level and level order are fixed from its largest analysis
+sample; under `"per_model"`, a stage whose sample lacks the reference level is
+reported as failed in `diagnostics` instead of being estimated against another
+reference. A `ref_level` supplied to the single-predictor wrappers is used for
+estimation as well as labelling.
 
 ### Results and diagnostics
 
@@ -177,28 +185,29 @@ stage. Different predictors may still have different analysis samples.
 Gaussian models are labelled `Beta` in batch plotting outputs. Some lower-level
 tables retain `OR` in column names for compatibility; consult `model_family`
 before interpreting estimates. Coefficient intervals use the normal
-approximation; p-values are taken from the fitted model summary.
+approximation; p-values are taken from the fitted model summary. Numeric outputs
+are unrounded; only the formatted tables are rounded.
 
-For categorical risk differences, predicted probabilities are averaged over
-the analysis sample under each exposure level and contrasted with the reference
-level. Simulation uses `n_sim` coefficient draws and the fitted covariance
-matrix; intervals are the 2.5th and 97.5th percentiles, and p-values use a normal
-approximation with the simulated standard deviation. These are model-based
-associations; causal interpretation requires additional assumptions.
-
-The numeric-predictor branch of `makeRDTable()` currently computes
-`mean(p * (1 - p) * x)`, rather than the usual coefficient-based logistic
-derivative. Its output requires independent validation before interpretation as
-an average marginal effect. Risk differences are produced only for binomial
-models; `include_rd = FALSE` disables them. The default simulation size is 100.
+Risk differences are estimated by standardisation over the analysis sample. For
+a factor predictor, predicted risks are averaged with every observation set to
+each level and contrasted with the reference level. For a numeric predictor, the
+estimate is the average marginal effect: the mean derivative of predicted risk
+per one-unit increase. Intervals use the delta method by default;
+`rd_ci_method = "simulation"` instead takes the 2.5th and 97.5th percentiles of
+`n_sim` multivariate-normal coefficient draws, using a fixed seed without
+disturbing the session's random-number stream. P-values use a normal
+approximation. These are model-based associations; causal interpretation
+requires additional assumptions. Risk differences are produced only for binomial
+models; `include_rd = FALSE` disables them.
 
 `ncores = NULL` or `1` runs sequentially. Larger values request a `future`
 backend. `ModelMakerMultiRD()` can retry incomplete results with revised GLM
 controls and recover from parallel failures. Supplying `savepath` writes
-aggregate CSV/RDS results and per-predictor checkpoints under `runs/`. Reuse a
-checkpoint directory only for an unchanged dataset and model specification:
-completed outputs are detected by predictor filenames, without validating the
-analysis configuration.
+aggregate CSV/RDS results and per-predictor checkpoints under `runs/`. Each
+checkpoint stores a fingerprint of the model specification and the predictor's
+data columns; a checkpoint that does not match the current call is recomputed
+rather than reused. Checkpoints written by earlier versions have no fingerprint
+and are recomputed once.
 
 ### Supporting functions
 
@@ -241,22 +250,23 @@ prevalence_table <- makeTablesNew(
 `add_conf_ints()` uses Wilson intervals by default. Assay correction applies
 `(p + spec - 1) / (sens + spec - 1)` to the estimate and interval bounds,
 constraining results to [0, 1]. Sensitivity and specificity are treated as fixed;
-their uncertainty is not propagated. The `makeTablesNew()` defaults
-(`sens = 0.844`, `spec = 0.986`) are study-specific. Setting both to 1 returns
-uncorrected estimates.
+their uncertainty is not propagated. `makeTablesNew()` and `stratifiedTables()`
+default to `sens = 1` and `spec = 1`, which return uncorrected estimates; supply
+assay values explicitly to correct for test performance. (Earlier versions
+silently applied the REACT assay values `sens = 0.844` and `spec = 0.986`.)
 
 Numeric `makeTablesNew()` output contains `Positive`, `Total`, `Prevalence`,
-`Lower` and `Upper`; prevalence columns refer to assay-adjusted estimates.
-`percent = TRUE` expresses these on a percentage scale. `for_report = TRUE`
-returns observed and adjusted estimates as formatted percentage intervals.
-Supply `cov_name_list` explicitly, including `NULL` when labels are unnecessary.
-The output schema assumes an outcome coded 0/1 despite accepting alternative
-positive and negative labels.
+`Lower` and `Upper`; prevalence columns refer to assay-adjusted estimates, which
+equal the observed estimates under the defaults. `percent = TRUE` expresses these
+on a percentage scale. `for_report = TRUE` returns observed and adjusted
+estimates as formatted percentage intervals. Supply `cov_name_list` explicitly,
+including `NULL` when labels are unnecessary. `pos_val` and `neg_val` name the
+outcome's positive and negative values; other values, such as missing-data
+codes, are excluded.
 
 Weighted counts are rounded before binomial interval calculation. This is not
-survey-design inference. The current `stratifiedTables()` wrapper does not
-forward all its exposed options, including alternative outcome coding and
-`percent`; use `makeTablesNew()` on explicit subsets when these are required.
+survey-design inference. `stratifiedTables()` forwards outcome coding, assay
+values, weights and `percent` to `makeTablesNew()`.
 See [the prevalence implementation](R/make_prevalence_tables.R).
 
 ## Automated analysis
@@ -272,8 +282,9 @@ logical, or numeric with at most `outcome_cat_unique_threshold` distinct values
 (default 6). This rule controls table layout, independently of the regression
 family. `include_rd` defaults to `FALSE`; supplying `NULL` enables automatic
 selection for binary outcomes. The report ranks associations by p-value,
-selecting one category per predictor from the highest model-stage index. Treat
-this ranking as exploratory, particularly when adjustment sets are not nested.
+selecting one category per predictor from that predictor's most-adjusted model;
+a predictor that is also a covariate is not adjusted for itself. Treat this
+ranking as exploratory, particularly when adjustment sets are not nested.
 See [the driver](R/automated_analysis.R).
 
 ## Figures, themes and colours
@@ -307,7 +318,9 @@ ggplot2::ggplot(clinical, ggplot2::aes(x = age, fill = sex)) +
 ```
 
 Forest plots use a logarithmic odds-ratio scale with null value 1, and linear
-coefficient or risk-difference scales with null value 0. Pass numeric
+coefficient or risk-difference scales with null value 0. `xrange` sets the
+visible odds-ratio range (default 1/4 to 16); estimates or interval bounds beyond
+it are clipped at the panel edge, with a warning. Pass numeric
 `plot_output` data rather than formatted table strings. `plotReactForest()`
 requires `ggnewscale` in addition to the declared package dependencies.
 

@@ -2,9 +2,9 @@ exportPattern("^[[:alpha:]]+")
 import(dplyr)
 importFrom("grDevices", "cairo_pdf", "colorRampPalette")
 importFrom("methods", "is")
-importFrom("stats", "IQR", "addmargins", "anova", "as.formula",
+importFrom("stats", "IQR", "addmargins", "anova", "as.formula", "ave",
            "binomial", "chisq.test", "coef", "complete.cases",
-           "delete.response", "glm", "glm.control", "lm",
+           "delete.response", "formula", "glm", "glm.control", "lm",
            "median", "model.frame", "model.matrix", "na.omit",
            "plogis", "pnorm", "qnorm", "quantile", "sd", "terms",
            "update", "vcov")
