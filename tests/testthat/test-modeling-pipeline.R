@@ -359,3 +359,49 @@ test_that("a supplied reference level is used for estimation, not just labelling
   expect_equal(control$OR[control$Level == "Case"],
                1 / default$OR[default$Level == "Control"], tolerance = 1e-6)
 })
+
+test_that("checkpoints never return an earlier run's table, and CSV copies restore tables exactly", {
+  dat <- make_model_test_data(n = 400)
+  dat$y_cont <- rnorm(nrow(dat))
+  savepath <- withr::local_tempdir()
+  run <- function(outcome) {
+    suppressMessages(
+      ModelMakerMultiRD(dat, "cat", outcome = outcome, joint_adjustment_vars = "x2",
+                        include_rd = TRUE, include_rr = TRUE, ncores = 1, savepath = savepath)
+    )
+  }
+
+  binary <- run("y_bin")
+  # Gaussian outcomes have no RD or RR tables, on the first run or when reusing it.
+  expect_null(run("y_cont")$df_output_RDs)
+  reused <- run("y_cont")
+  expect_null(reused$df_output_RDs)
+  expect_null(reused$df_output_RRs)
+
+  binary <- run("y_bin")
+  unlink(file.path(savepath, "runs", "cat", "plot_rr.rds"))
+  restored <- run("y_bin")
+  expect_equal(restored$plot_output_RRs, binary$plot_output_RRs)
+  expect_equal(restored$plot_output, binary$plot_output)
+})
+
+test_that("a predictor that is also an adjuster keeps the shared stage numbers", {
+  dat <- make_model_test_data(n = 800)
+  res <- suppressMessages(
+    ModelMakerMultiRD(dat, c("x1", "x2"), outcome = "y_bin", joint_adjustment_vars = c("x2", "x3"),
+                      include_rd = TRUE, ncores = 1)
+  )
+  stages <- function(plot, var) sort(unique(plot$adjustment[plot$Variable == var]))
+  expect_equal(stages(res$plot_output, "X1"), 0:2)
+  # x2 is never adjusted for itself: its stages are crude and x3 (stage 2, fully adjusted).
+  expect_equal(stages(res$plot_output, "X2"), c(0, 2))
+  expect_equal(stages(res$plot_output_RDs, "X2"), c(0, 2))
+
+  # Each predictor's fully adjusted model shares a stage, and so a q-value family.
+  full <- res$plot_output[res$plot_output$adjustment == 2 & !res$plot_output$is_reference, ]
+  expect_setequal(full$Variable, c("X1", "X2"))
+  expect_equal(full$Q_value, p.adjust(full$P_value, "BH"))
+  forest <- plotReactForest(res, adjustment_numbers = c(0, 2))
+  expect_setequal(as.character(unique(forest$data$Variable[forest$data$adjustment == "2"])),
+                  c("X1", "X2"))
+})

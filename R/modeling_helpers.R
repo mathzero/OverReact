@@ -223,7 +223,8 @@
 }
 
 .react_extract_predictor_rows <- function(fit, predictor, ref_level = NULL, include_intercept = TRUE,
-                                          level_order = NULL, measure = NULL) {
+                                          level_order = NULL, measure = NULL,
+                                          outcome_levels = NULL) {
   coef_tab <- .react_build_coef_table(fit, ref_level = NULL, dp = NULL, measure = measure)
   if (!nrow(coef_tab)) return(coef_tab)
 
@@ -256,12 +257,16 @@
   }
 
   # Multinomial models have one block of rows per non-reference outcome level; offsetting
-  # row_order keeps each block together.
+  # row_order keeps each block together. The offset comes from the level's position in the
+  # full outcome (outcome_levels), so a stage whose sample lost an outcome level keeps
+  # its other blocks aligned with the other stages.
   blocks <- if ("outcome_level" %in% names(coef_tab)) unique(coef_tab$outcome_level) else NA_character_
   out_parts <- list()
   for (b in seq_along(blocks)) {
     in_block <- if (is.na(blocks[b])) rep(TRUE, nrow(coef_tab)) else coef_tab$outcome_level == blocks[b]
-    order_offset <- (b - 1L) * 100000L
+    block_index <- if (is.null(outcome_levels) || is.na(blocks[b])) b else match(blocks[b], outcome_levels)
+    if (is.na(block_index)) block_index <- length(outcome_levels) + b
+    order_offset <- (block_index - 1L) * 100000L
 
     if (isTRUE(include_intercept) && any(coef_tab$is_intercept & in_block)) {
       intercept_row <- coef_tab[coef_tab$is_intercept & in_block, , drop = FALSE]
@@ -341,6 +346,10 @@
   if (is.null(rd_tab) || !nrow(rd_tab)) return(data.frame())
 
   rd_tab <- as.data.frame(rd_tab, stringsAsFactors = FALSE)
+  # A failed calculation returns one placeholder row with no level; the stage then has
+  # no rows (its column shows "-") instead of an extra unlabelled row.
+  rd_tab <- rd_tab[!is.na(rd_tab$Level), , drop = FALSE]
+  if (!nrow(rd_tab)) return(data.frame())
   rownames(rd_tab) <- NULL
   is_categorical <- predictor %in% names(stage_meta$data) &&
     is.factor(stage_meta$data[[predictor]]) &&
@@ -424,6 +433,9 @@
   spec <- .react_resolve_family(data[[outcome]], family = family, outcome = outcome)
   .react_check_offset(offset, spec, data)
   data[[outcome]] <- .react_code_outcome(data[[outcome]], spec)
+  # Per-model samples can lose outcome levels, so multinomial rows are placed by the
+  # outcome's full level set.
+  outcome_levels <- if (is.factor(data[[outcome]])) levels(data[[outcome]]) else NULL
 
   used_adjusters <- unique(unlist(lapply(stage_specs, `[[`, "adjusted_vars"), use.names = FALSE))
   common_vars <- unique(c(outcome, predictor, used_adjusters, offset))
@@ -518,7 +530,8 @@
       ref_level = predictor_ref,
       include_intercept = include_intercept,
       level_order = predictor_levels,
-      measure = spec$measure
+      measure = spec$measure,
+      outcome_levels = outcome_levels
     )
     if (!nrow(stage_rows)) {
       rows_by_stage[[i]] <- stage_rows

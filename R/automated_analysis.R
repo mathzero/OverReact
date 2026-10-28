@@ -84,6 +84,9 @@ run_auto_tableone_regressions <- function(
   # Determine the model family; marginal effects need a binary outcome
   spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome)
   if (is.null(include_rd)) include_rd <- isTRUE(spec$binary)
+  # What the report describes: requests for other outcomes are skipped by the models.
+  rd_estimated <- isTRUE(include_rd) && isTRUE(spec$binary)
+  rr_estimated <- isTRUE(include_rr) && isTRUE(spec$binary)
 
   # ---- 1) Build Table 1 -------------------------------------------------
   table_summary_stat <- match.arg(table_summary_stat)
@@ -229,8 +232,8 @@ run_auto_tableone_regressions <- function(
     sprintf("**Independent variables analysed**: %d", length(independent_variables)),
     sprintf("**Covariates (adjusted)**: %s", ifelse(length(covariates), paste(covariates, collapse = ", "), "(none)")),
     sprintf("**Incremental adjustment**: %s", ifelse(incremental, "Yes", "No")),
-    sprintf("**Risk difference estimated**: %s", ifelse(include_rd, "Yes", "No")),
-    sprintf("**Risk ratio estimated**: %s", ifelse(include_rr, "Yes", "No")),
+    sprintf("**Risk difference estimated**: %s", ifelse(rd_estimated, "Yes", "No")),
+    sprintf("**Risk ratio estimated**: %s", ifelse(rr_estimated, "Yes", "No")),
     if (use_q) sprintf("**Multiple testing**: q-values from p.adjust(method = \"%s\") over each section's tests", p_adjust_method),
     ""
   )
@@ -243,7 +246,7 @@ run_auto_tableone_regressions <- function(
                bullets(top_model, effect_name, 2), "")
   }
   section_titles <- c(RD = "Risk difference", RR = "Marginal risk ratio")
-  for (m in c(if (isTRUE(include_rd)) "RD", if (isTRUE(include_rr)) "RR")) {
+  for (m in c(if (rd_estimated) "RD", if (rr_estimated) "RR")) {
     top_m <- top_rows(marginal_tables[[m]])
     if (is.null(top_m) || !nrow(top_m) || !m %in% names(top_m)) next
     lines <- c(lines, sprintf("## Top %d associations by adjusted p-value (%s)", nrow(top_m), section_titles[[m]]), "",

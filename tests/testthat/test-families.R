@@ -130,3 +130,38 @@ test_that("families are validated against the outcome", {
   expect_error(fit_family(dat, "x", "type", "gaussian"), "needs a numeric outcome")
   expect_error(fit_family(dat, "x", "y", "ordinal"), "at least three outcome categories")
 })
+
+test_that("multinomial rows stay aligned when a per-model sample loses an outcome level", {
+  set.seed(13)
+  n <- 300
+  dat <- data.frame(x = factor(sample(c("a", "b", "c"), n, TRUE)),
+                    sex = factor(sample(c("F", "M"), n, TRUE)))
+  dat$y3 <- factor(sample(c("lo", "mid", "hi"), n, TRUE, prob = c(0.45, 0.1, 0.45)),
+                   levels = c("lo", "mid", "hi"))
+  dat$sex[dat$y3 == "mid"] <- NA  # the adjusted sample has no 'mid' outcomes
+  wide <- fit_family(dat, "x", "y3", "multinomial", adjusters = "sex",
+                     sample_strategy = "per_model")$df_output
+
+  expect_identical(wide$Outcome, rep(c("mid", "hi"), each = 3))
+  expect_identical(wide$Category, rep(c("a [reference]", "b", "c"), 2))
+  hi <- wide[wide$Outcome == "hi" & wide$Category != "a [reference]", ]
+  expect_false(any(c(hi$crude_mod_OR, hi$adj_sex_OR) == "-"))
+  expect_true(all(wide$adj_sex_OR[wide$Outcome == "mid"] == "-"))
+})
+
+test_that("multinomial fits that stop at the iteration limit are flagged", {
+  dat <- make_family_test_data(n = 300)
+  real_multinom <- nnet::multinom
+  local_mocked_bindings(
+    multinom = function(...) {
+      fit <- real_multinom(...)
+      fit$convergence <- 1L
+      fit
+    },
+    .package = "nnet"
+  )
+  fit <- .react_fit_model_captured(type ~ grp, data = dat, spec = .react_family_spec("multinomial"),
+                                   control = stats::glm.control())
+  expect_s3_class(fit$fit, "multinom")
+  expect_match(fit$warnings, "did not converge", all = FALSE)
+})

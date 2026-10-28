@@ -78,3 +78,33 @@ test_that("ModelMakerMultiRD reports correct numeric RDs", {
   adjusted <- res$plot_output_RDs[res$plot_output_RDs$adjustment == 1, , drop = FALSE]
   expect_equal(adjusted$RD, logistic_ame(fit, "x"), tolerance = 1e-6)
 })
+
+test_that("aliased adjusters leave marginal effects unchanged", {
+  dat <- make_rd_test_data(n = 1000)
+  dat$z_copy <- dat$z
+  res <- suppressMessages(
+    ModelMakerMultiRD(dat, "grp", outcome = "y", joint_adjustment_vars = c("z", "z_copy"),
+                      include_rd = TRUE, include_rr = TRUE, ncores = 1)
+  )
+  expect_identical(res$df_output_RDs$Category, c("a [reference]", "b", "c"))
+  expect_identical(res$df_output_RDs[["adj_z+z_copy_RD"]], res$df_output_RDs[["adj_z_RD"]])
+  expect_identical(res$df_output_RRs[["adj_z+z_copy_RR"]], res$df_output_RRs[["adj_z_RR"]])
+  expect_equal(makeRDTable(glm(y ~ grp + z + z_copy, binomial, dat), "grp"),
+               makeRDTable(glm(y ~ grp + z, binomial, dat), "grp"))
+})
+
+test_that("risk differences requested for other outcomes are reported as skipped", {
+  dat <- make_rd_test_data(n = 300)
+  dat$g <- rnorm(nrow(dat))
+  messages <- capture_messages(
+    res <- ModelMakerMultiRD(dat, "x", outcome = "g", joint_adjustment_vars = "z",
+                             include_rd = TRUE, include_rr = TRUE, ncores = 1)
+  )
+  expect_true(any(grepl("need a binary outcome", messages)))
+  expect_null(res$df_output_RDs)
+  auto <- suppressMessages(
+    run_auto_tableone_regressions(dat, outcome = "g", covariates = "z", independent_variables = "x",
+                                  include_rd = TRUE, ncores = 1)
+  )
+  expect_match(auto$report_markdown, "Risk difference estimated\\*\\*: No")
+})

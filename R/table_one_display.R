@@ -18,7 +18,8 @@ tableOneDisplay <- function(tab, output = c("flextable", "gt"), title = NULL,
                         check.names = FALSE, stringsAsFactors = FALSE)
   for (col in setdiff(names(tab), c("Variable", "Level"))) display[[col]] <- tab[[col]]
 
-  fixed <- function(x, digits) formatC(x, format = "f", digits = digits)
+  # Missing values stay missing (formatC() would print them as " NA") and display blank.
+  fixed <- function(x, digits) ifelse(is.na(x), NA_character_, formatC(x, format = "f", digits = digits))
   if (is.numeric(display$`P-value`)) {
     p <- display$`P-value`
     display$`P-value` <- ifelse(p < 10^-p_digits, paste0("<", fixed(10^-p_digits, p_digits)), fixed(p, p_digits))
@@ -26,7 +27,7 @@ tableOneDisplay <- function(tab, output = c("flextable", "gt"), title = NULL,
   if (is.numeric(display$SMD)) display$SMD <- fixed(display$SMD, smd_digits)
   display[] <- lapply(display, function(col) {
     col <- as.character(col)
-    col[is.na(col) | col == "NA" | trimws(col) == ""] <- ""
+    col[is.na(col) | trimws(col) == ""] <- ""
     col
   })
 

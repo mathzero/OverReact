@@ -203,7 +203,9 @@ rr_models <- ModelMakerMultiRD(
 
 With `incremental = TRUE`, adjusters enter cumulatively in the order supplied
 in `joint_adjustment_vars`; otherwise `adj_sets` specifies named models. A
-predictor is removed from its own adjustment set. The default
+predictor is removed from its own adjustment set, and its stages keep the
+numbers they have for other predictors: stage k adjusts for the first k
+adjusters, so a predictor's own position is skipped. The default
 `sample_strategy = "common_per_predictor"` uses complete cases across that
 predictor, the outcome and all its requested adjusters, preserving a common
 sample across adjustment stages. `"per_model"` permits the sample to vary by

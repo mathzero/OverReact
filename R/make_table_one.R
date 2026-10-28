@@ -163,7 +163,9 @@
 .mean_pairwise_smd <- function(groups, smd_fun) {
   if (length(groups) < 2L) return(NA_real_)
   pairs <- utils::combn(length(groups), 2)
-  mean(apply(pairs, 2, function(ix) smd_fun(groups[[ix[1]]], groups[[ix[2]]])), na.rm = TRUE)
+  smds <- apply(pairs, 2, function(ix) smd_fun(groups[[ix[1]]], groups[[ix[2]]]))
+  # No defined pairwise SMD (constant or single-category variables) gives NA, not NaN.
+  if (all(is.na(smds))) NA_real_ else mean(smds, na.rm = TRUE)
 }
 
 .table_one_cells <- function(counts, denominators, include_percentages,
@@ -263,7 +265,7 @@ tableCat <- function(dat,
     test <- .table_one_cat_test(test_counts, cat_test, weighted = !is.null(w))
     p <- if (test == "fisher") .safe_fisher(test_counts, rowvar, colvar)$p.value else .safe_chisq(test_counts, rowvar, colvar)$p.value
     tab$`P-value` <- c(p, rep(NA_real_, nrow(counts)))
-    attr(tab, "test") <- .table_one_test_labels[[test]]
+    if (!is.na(p)) attr(tab, "test") <- .table_one_test_labels[[test]]
   }
   if (isTRUE(smd)) {
     observed <- observed_counts[rowSums(observed_counts) > 0, colSums(observed_counts) > 0, drop = FALSE]
@@ -317,7 +319,8 @@ tableCont <- function(dat,
   if (statistical_test) {
     # "auto" pairs the test with the summary: ANOVA for means, Kruskal-Wallis for medians.
     test <- if (identical(cont_test, "auto")) if (summary_stat == "median") "kruskal" else "anova" else cont_test
-    p <- if (nlevels(test_dat$group) < 2L) NA_real_ else tryCatch({
+    # A variable with one observed value has nothing to test (ANOVA would return noise).
+    p <- if (nlevels(test_dat$group) < 2L || length(unique(test_dat$value)) < 2L) NA_real_ else tryCatch({
       if (test == "kruskal") {
         stats::kruskal.test(value ~ group, data = test_dat)$p.value
       } else {
@@ -328,7 +331,7 @@ tableCont <- function(dat,
       NA_real_
     })
     tab$`P-value` <- if (is.finite(p)) p else NA_real_
-    attr(tab, "test") <- .table_one_test_labels[[test]]
+    if (is.finite(p)) attr(tab, "test") <- .table_one_test_labels[[test]]
   }
   if (isTRUE(smd)) {
     by_group <- Filter(function(x) length(x) >= 2L, split(test_dat$value, test_dat$group))

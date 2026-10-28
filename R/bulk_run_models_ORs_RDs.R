@@ -105,10 +105,18 @@ makeORTable <- function(mod, ref_level = NULL, dp = 3) {
   if (is.null(data)) data <- model.frame(mod)
   if (!variable_name %in% names(data)) return(na_tbl)
 
-  # Check for valid coefficients and vcov matrix (robust, if the fit has one)
-  beta_hat <- coef(mod)
+  # Check for valid coefficients and vcov matrix (robust, if the fit has one). Aliased
+  # (collinear) terms have no coefficient and add nothing to predictions, as in
+  # predict.glm(), so the contrasts use the estimable coefficients only.
+  beta_all <- coef(mod)
+  estimable <- !is.na(beta_all)
+  beta_hat <- beta_all[estimable]
   vcov_mat <- tryCatch(.react_vcov(mod), error = function(e) NULL)
-  if (is.null(vcov_mat) || anyNA(vcov_mat) || anyNA(beta_hat)) {
+  if (!is.null(vcov_mat) && nrow(vcov_mat) == length(beta_all)) {
+    vcov_mat <- vcov_mat[estimable, estimable, drop = FALSE]
+  }
+  if (is.null(vcov_mat) || nrow(vcov_mat) != length(beta_hat) || anyNA(vcov_mat) ||
+      !length(beta_hat)) {
     warning("Invalid variance-covariance matrix for ", measure, " calculation")
     return(na_tbl)
   }
@@ -123,7 +131,7 @@ makeORTable <- function(mod, ref_level = NULL, dp = 3) {
 
   tt <- delete.response(terms(mod))
   get_X <- function(nd) {
-    model.matrix(tt, data = nd, xlev = mod$xlevels, contrasts.arg = mod$contrasts)
+    model.matrix(tt, data = nd, xlev = mod$xlevels, contrasts.arg = mod$contrasts)[, estimable, drop = FALSE]
   }
   linkinv <- mod$family$linkinv
   mu_eta <- mod$family$mu.eta
@@ -347,6 +355,17 @@ build_cumulative_sets <- function(adj_vars) {
   sets
 }
 
+# Stage numbers shared by every predictor. With incremental sets, stage k is the model
+# adjusted for the first k joint adjusters, so a predictor removed from its own sets skips
+# its position instead of shifting every later stage; named sets are numbered in order.
+.react_stage_numbers <- function(sets, joint_adjustment_vars, incremental) {
+  if (!isTRUE(incremental)) return(seq_along(sets))
+  vapply(sets, function(s) {
+    if (!length(s)) return(max(1L, length(joint_adjustment_vars)))
+    match(s[[length(s)]], joint_adjustment_vars)
+  }, integer(1), USE.NAMES = FALSE)
+}
+
 # Compute factor-level order for wide tables (reference first, then remaining levels in factor order)
 compute_level_order <- function(x, ref_level = NULL) {
   if (!is.factor(x)) return(NULL)
@@ -535,6 +554,8 @@ compute_level_order <- function(x, ref_level = NULL) {
   if (!nrow(df)) return(df)
   to_char <- intersect(c("Level","Category","term_raw","model","model_family","measure","outcome_level","adjustment_label","stage","adjusted_vars","status","error_msg","warnings","separation_msg"), names(df))
   for (nm in to_char) df[[nm]] <- as.character(df[[nm]])
+  # CSV readers turn the crude model's empty adjuster list into NA.
+  if ("adjusted_vars" %in% names(df)) df$adjusted_vars[is.na(df$adjusted_vars)] <- ""
   if (startsWith(kind, "plot_")) {
     if ("adjustment" %in% names(df)) df$adjustment <- suppressWarnings(as.integer(df$adjustment))
     num_cols <- c(toupper(sub("^plot_", "", kind)), "Lower", "Upper", "P_value", "Q_value")
@@ -590,19 +611,20 @@ compute_level_order <- function(x, ref_level = NULL) {
   .safe_dir_create(filemap$dir)
   # The spec file is written last, so an interrupted save never looks complete.
   if (file.exists(filemap$spec_rds)) unlink(filemap$spec_rds)
+  # Every table is saved, empty ones as an empty data frame. A table with no CSV copy has
+  # any CSV from an earlier run removed, so a stale copy can never be loaded in its place.
+  save_table <- function(obj, rds_path, csv_path) {
+    obj <- if (is.null(obj)) data.frame() else obj
+    .atomic_write_rds(obj, rds_path)
+    if (isTRUE(write_csv) && nrow(obj)) .atomic_write_csv(obj, csv_path) else unlink(csv_path)
+  }
   for (tab in filemap$tables) {
     for (kind in c("df", "plot")) {
-      obj <- out[[paste0(if (kind == "df") "tidy_res_" else "tidy_plot_", tab)]]
-      .atomic_write_rds(obj, filemap[[paste0(kind, "_", tab, "_rds")]])
-      if (isTRUE(write_csv) && !is.null(obj) && nrow(obj)) {
-        .atomic_write_csv(obj, filemap[[paste0(kind, "_", tab, "_csv")]])
-      }
+      save_table(out[[paste0(if (kind == "df") "tidy_res_" else "tidy_plot_", tab)]],
+                 filemap[[paste0(kind, "_", tab, "_rds")]], filemap[[paste0(kind, "_", tab, "_csv")]])
     }
   }
-  if (!is.null(diagnostics)) {
-    .atomic_write_rds(diagnostics, filemap$diag_rds)
-    if (isTRUE(write_csv) && nrow(diagnostics)) .atomic_write_csv(diagnostics, filemap$diag_csv)
-  }
+  save_table(diagnostics, filemap$diag_rds, filemap$diag_csv)
   if (!is.null(spec_hash)) .atomic_write_rds(spec_hash, filemap$spec_rds)
   invisible(TRUE)
 }
@@ -610,19 +632,21 @@ compute_level_order <- function(x, ref_level = NULL) {
 .load_var_outputs <- function(filemap) {
   keys <- paste0(rep(c("df_", "plot_"), times = length(filemap$tables)),
                  rep(filemap$tables, each = 2L))
-  tables <- lapply(keys, function(key) .robust_read_rds(filemap[[paste0(key, "_rds")]]))
-  names(tables) <- keys
-  diag_df <- .robust_read_rds(filemap$diag_rds)
-
-  # Fall back to the CSV copies, and cache them as RDS.
-  if (any(vapply(tables, is.null, logical(1)))) {
-    tables <- lapply(keys, function(key) .coerce_df_types(.robust_read_csv(filemap[[paste0(key, "_csv")]]), key))
-    names(tables) <- keys
-    diag_df <- .coerce_df_types(.robust_read_csv(filemap$diag_csv), "diagnostics")
+  # A saved NULL or empty table is a result; only a missing or unreadable RDS file falls
+  # back to its CSV copy, which is then cached as RDS.
+  read_or_fallback <- function(rds_path, csv_path, kind) {
+    rds <- if (file.exists(rds_path)) tryCatch(list(readRDS(rds_path)), error = function(e) NULL)
+    if (!is.null(rds)) return(rds[[1]])
+    out <- .coerce_df_types(.robust_read_csv(csv_path), kind)
     .safe_dir_create(filemap$dir)
-    for (key in keys) .atomic_write_rds(tables[[key]], filemap[[paste0(key, "_rds")]])
-    if (!is.null(diag_df) && nrow(diag_df)) .atomic_write_rds(diag_df, filemap$diag_rds)
+    .atomic_write_rds(out, rds_path)
+    out
   }
+  tables <- lapply(keys, function(key) {
+    read_or_fallback(filemap[[paste0(key, "_rds")]], filemap[[paste0(key, "_csv")]], key)
+  })
+  names(tables) <- keys
+  diag_df <- read_or_fallback(filemap$diag_rds, filemap$diag_csv, "diagnostics")
 
   as_df <- function(x) as.data.frame(if (is.null(x)) data.frame() else x, stringsAsFactors = FALSE)
   out <- list()
@@ -845,6 +869,10 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   .react_check_offset(offset, spec, dat)
   message(if (identical(family, "auto")) "Assuming " else "Fitting ", spec$label, " models.")
   # Marginal effects need a binary outcome; other families skip them.
+  if (!isTRUE(spec$binary) && (isTRUE(include_rd) || isTRUE(include_rr))) {
+    message("Risk differences and risk ratios need a binary outcome; they are not estimated for ",
+            spec$label, " models.")
+  }
   marginal <- if (isTRUE(spec$binary)) c(if (isTRUE(include_rd)) "RD", if (isTRUE(include_rr)) "RR") else character(0)
   tables <- c("or", if (isTRUE(include_rd)) "rd", if (isTRUE(include_rr)) "rr")
 
@@ -881,7 +909,9 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
     sets <- sets_for(pred_name)
     cols <- intersect(unique(c(outcome, pred_name, unlist(sets, use.names = FALSE), offset)), names(dat))
     rlang::hash(list(
-      outcome = outcome, predictor = pred_name, sets = sets, family = spec$name, offset = offset,
+      outcome = outcome, predictor = pred_name, sets = sets,
+      stages = .react_stage_numbers(sets, joint_adjustment_vars, incremental),
+      family = spec$name, offset = offset,
       include_crude = include_crude, include_rd = include_rd, include_rr = include_rr,
       n_sim = n_sim, rd_ci_method = rd_ci_method, sample_strategy = sample_strategy,
       glm_control = glm_control, retry_failed = retry_failed, max_retries = max_retries,
@@ -912,7 +942,7 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
 
     adj_map <- data.frame(
       adjustment_label = names(sets),
-      adjustment = vapply(sets, length, integer(1)),
+      adjustment = .react_stage_numbers(sets, joint_adjustment_vars, incremental),
       stringsAsFactors = FALSE
     )
 
@@ -991,8 +1021,8 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
     # --------- plot tables (keep [reference]) ---------
     plot_table <- function(m) {
       plot_df <- dplyr::bind_rows(res[[paste0("adj_", tolower(m), "_outputs")]], .id = "adjustment_label")
-      if (nrow(plot_df) && !"adjustment" %in% names(plot_df)) {
-        plot_df <- dplyr::left_join(plot_df, adj_map, by = "adjustment_label")
+      if (nrow(plot_df)) {
+        plot_df$adjustment <- adj_map$adjustment[match(plot_df$adjustment_label, adj_map$adjustment_label)]
       }
       crude <- res[[paste0("crude_model_", m)]]
       if (isTRUE(include_crude) && has_rows(crude)) {

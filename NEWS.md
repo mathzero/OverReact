@@ -61,7 +61,16 @@
   that are also covariates.
 * `plotReactForest()` clips out-of-range estimates instead of dropping them.
 * Weighted `tableCat()` intervals and tests use the Kish effective sample size.
-* Checkpoints are reused only for an identical specification and data.
+* Checkpoints are reused only for an identical specification and data, and a
+  run with no RD or RR table no longer returns one left by an earlier run.
+* A predictor that is also in `joint_adjustment_vars` keeps the stage numbers
+  shared by the other predictors (its own position is skipped), so forest plots
+  of the fully adjusted stage include it.
+* Marginal RDs and RRs ignore aliased (collinear) adjusters, as `predict.glm()`
+  does, instead of failing and adding an unlabelled row.
+* Requesting RDs or RRs for a non-binary outcome prints a message, and the
+  automated report no longer says they were estimated.
+* `tableOne()` gives a constant variable no p-value (ANOVA returned noise).
 * Reference levels are fixed per predictor across adjustment stages.
 * `cov_name_list` now labels variables in the batch wrappers, and variables
   with colliding labels are kept apart.

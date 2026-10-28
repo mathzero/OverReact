@@ -138,7 +138,13 @@
     if (identical(spec$engine, "multinom")) {
       if (!requireNamespace("nnet", quietly = TRUE)) stop("Multinomial models need the nnet package.")
       # model = TRUE keeps the model frame, which the coefficient extraction needs.
-      return(nnet::multinom(formula, data = data, trace = FALSE, Hess = TRUE, model = TRUE))
+      fit <- nnet::multinom(formula, data = data, trace = FALSE, Hess = TRUE, model = TRUE,
+                            maxit = 1000)
+      # nnet stops at its iteration limit without a warning; record one, as glm() would.
+      if (!identical(as.integer(fit$convergence), 0L)) {
+        warning("multinom() did not converge in 1000 iterations.")
+      }
+      return(fit)
     }
     start <- NULL
     if (identical(spec$name, "log_binomial")) {

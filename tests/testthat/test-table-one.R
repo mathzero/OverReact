@@ -264,3 +264,23 @@ test_that("tableOneDisplay renders flextable and gt tables", {
   expect_s3_class(tableOneDisplay(out, "gt"), "gt_tbl")
   expect_error(tableOneDisplay(data.frame(x = 1)), "tableOne")
 })
+
+test_that("tests and SMDs are reported only where they are defined", {
+  dat <- data.frame(g = rep(c("a", "b"), each = 5), const = 3, one_cat = "x", v = c(1:5, 3:7),
+                    smoke = c("y", "n", NA, "y", "n", "n", "y", NA, "n", "y"))
+  out <- suppressMessages(tableOne(dat, c("const", "one_cat", "v", "smoke"), "g",
+                                   statistical_test = TRUE, smd = TRUE))
+  const <- out$Variable == "const, mean (SD)"
+  expect_true(is.na(out$`P-value`[const]))
+  expect_false(any(is.nan(out$SMD)))
+  expect_true(is.na(out$SMD[const]))
+  expect_identical(names(attr(out, "tests")), c("v", "smoke"))
+  # Without groups nothing is tested, so no test is named.
+  expect_length(attr(suppressMessages(tableOne(dat, c("v", "smoke"), statistical_test = TRUE)), "tests"), 0)
+
+  skip_if_not_installed("gt")
+  shown <- tableOneDisplay(out, "gt")[["_data"]]
+  expect_true("NA" %in% shown$Characteristic)  # the missing category keeps its label
+  expect_false(any(trimws(shown$SMD) %in% c("NA", "NaN")))
+  expect_identical(shown$SMD[shown$Characteristic == "const, mean (SD)"], "")
+})
