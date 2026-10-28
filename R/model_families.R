@@ -190,3 +190,23 @@
   }
   df
 }
+
+# Multiple-testing adjustment: q-values (Benjamini-Hochberg by default, or any
+# stats::p.adjust() method) within each adjustment stage, across every predictor and
+# level. Reference and intercept rows are not tests. NULL or "none" adds no column.
+.react_add_q_values <- function(df, method = "BH") {
+  if (is.null(method) || identical(method, "none")) return(df)
+  method <- match.arg(method, stats::p.adjust.methods)
+  if (is.null(df) || !nrow(df) || !"P_value" %in% names(df)) return(df)
+  is_test <- !is.na(df$P_value)
+  if ("is_reference" %in% names(df)) is_test <- is_test & !(df$is_reference %in% TRUE)
+  if ("is_intercept" %in% names(df)) is_test <- is_test & !(df$is_intercept %in% TRUE)
+  stage <- if ("adjustment" %in% names(df)) as.character(df$adjustment) else rep("1", nrow(df))
+  q <- rep(NA_real_, nrow(df))
+  for (s in unique(stage[is_test])) {
+    idx <- which(is_test & stage %in% s)
+    q[idx] <- stats::p.adjust(df$P_value[idx], method = method)
+  }
+  df$Q_value <- q
+  df[, append(setdiff(names(df), "Q_value"), "Q_value", after = match("P_value", names(df))), drop = FALSE]
+}

@@ -36,6 +36,7 @@ run_auto_tableone_regressions <- function(
     include_rd = FALSE,              # NULL: TRUE for binary outcomes, else FALSE
     include_rr = FALSE,              # marginal risk ratios (binary outcomes)
     family = "auto",                 # model family; see ModelMakerMultiRD()
+    p_adjust_method = "BH",          # q-values (p.adjust method); NULL or "none" for none
     ncores = NULL,
     n_sim = 100,
     rd_ci_method = c("delta", "simulation"),
@@ -126,6 +127,7 @@ run_auto_tableone_regressions <- function(
     include_rd                  = include_rd,
     include_rr                  = include_rr,
     family                      = spec$name,
+    p_adjust_method             = p_adjust_method,
     n_sim                       = n_sim,
     rd_ci_method                = match.arg(rd_ci_method),
     savepath                    = save_dir,
@@ -177,10 +179,14 @@ run_auto_tableone_regressions <- function(
     d
   }
 
-  # The top_k predictors by p-value, each represented by its lowest-p category.
+  # The top_k predictors by p-value, each represented by its lowest-p category, with
+  # q-values over every test the section ranks (all levels of each predictor's
+  # most-adjusted model).
+  use_q <- !is.null(p_adjust_method) && !identical(p_adjust_method, "none")
   top_rows <- function(df) {
     df <- filter_full(df)
     if (is.null(df) || !nrow(df) || !all(c("Variable", "P_value") %in% names(df))) return(NULL)
+    if (use_q) df$report_q <- stats::p.adjust(df$P_value, method = p_adjust_method)
     best <- do.call(rbind, lapply(split(df, df$Variable), function(z) {
       z[order(z$P_value, na.last = TRUE)[1], , drop = FALSE]
     }))
@@ -204,7 +210,8 @@ run_auto_tableone_regressions <- function(
       # Show model/adjustment label if useful
       lab <- if ("adjustment_label" %in% names(top)) coalesce_chr(r[["adjustment_label"]], "") else ""
       lab <- if (nzchar(lab)) paste0(" [", lab, "]") else ""
-      paste0("- **", var, "** - ", catg, ": ", effect_name, "=", eff_str, ", p=", ptxt, lab)
+      qtxt <- if (use_q) paste0(", q=", fmt_p(suppressWarnings(as.numeric(r[["report_q"]])))) else ""
+      paste0("- **", var, "** - ", catg, ": ", effect_name, "=", eff_str, ", p=", ptxt, qtxt, lab)
     })
   }
 
@@ -224,6 +231,7 @@ run_auto_tableone_regressions <- function(
     sprintf("**Incremental adjustment**: %s", ifelse(incremental, "Yes", "No")),
     sprintf("**Risk difference estimated**: %s", ifelse(include_rd, "Yes", "No")),
     sprintf("**Risk ratio estimated**: %s", ifelse(include_rr, "Yes", "No")),
+    if (use_q) sprintf("**Multiple testing**: q-values from p.adjust(method = \"%s\") over each section's tests", p_adjust_method),
     ""
   )
 

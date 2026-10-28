@@ -140,7 +140,8 @@ ModelMakerMulti <- function(dat,
                             sample_strategy            = c("common_per_predictor", "per_model"),
                             glm_control                = stats::glm.control(maxit = 50),
                             family                     = "auto",
-                            offset                     = NULL) {
+                            offset                     = NULL,
+                            p_adjust_method            = "BH") {
   sample_strategy <- match.arg(sample_strategy)
 
   if (!is.data.frame(dat)) stop("dat must be a data.frame")
@@ -259,6 +260,7 @@ ModelMakerMulti <- function(dat,
 
   # Name estimate columns after the family's measure (OR, RR, IRR or Beta).
   out_plot <- .react_label_measure(out_plot, spec$measure)
+  out_plot <- .react_add_q_values(out_plot, p_adjust_method)
   out_df <- .react_label_measure(out_df, spec$measure, wide = TRUE)
   names(out_df)[names(out_df) == "outcome_level"] <- "Outcome"
 

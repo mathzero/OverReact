@@ -825,7 +825,8 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
                               rd_ci_method = c("delta", "simulation"),
                               include_rr = FALSE,
                               family = "auto",
-                              offset = NULL) {
+                              offset = NULL,
+                              p_adjust_method = "BH") {
   sample_strategy <- match.arg(sample_strategy)
   rd_ci_method <- match.arg(rd_ci_method)
 
@@ -1102,7 +1103,8 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
       plot_df <- plot_df[!plot_df$is_intercept, , drop = FALSE]
     }
     names(plot_df)[names(plot_df) == "Level"] <- "Category"
-    plot_out[[m]] <- plot_df
+    # q-values need every predictor's p-values, so they are added after combining.
+    plot_out[[m]] <- .react_add_q_values(plot_df, p_adjust_method)
 
     df <- df_out[[m]]
     names(df)[names(df) == "Level"] <- "Category"

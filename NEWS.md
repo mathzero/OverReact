@@ -15,6 +15,10 @@
   non-log links are no longer exponentiated.
 * `plotReactForest()` plots RR and IRR estimates on a ratio scale and labels
   multinomial rows with their outcome level.
+* Batch plotting outputs gain a `Q_value` column: Benjamini-Hochberg (or any
+  `p_adjust_method`) adjusted p-values within each adjustment stage, across all
+  predictors and levels. The automated report shows q-values for the tests it
+  ranks.
 
 ## Breaking changes
 

@@ -207,11 +207,18 @@ estimation as well as labelling.
 | `ModelMakerMultiRD()` element | Contents |
 | --- | --- |
 | `df_output` | Formatted estimates across model stages; columns end in the family's measure (for example `crude_mod_OR`, `adj_age_IRR`). Multinomial models add an `Outcome` column. |
-| `plot_output` | Numeric estimates (in a column named after the measure), `Lower`, `Upper`, `P_value`, reference indicators, `measure`, `model_family`, stage labels and `Nobs_in_model`; multinomial models add `outcome_level`. |
+| `plot_output` | Numeric estimates (in a column named after the measure), `Lower`, `Upper`, `P_value`, `Q_value`, reference indicators, `measure`, `model_family`, stage labels and `Nobs_in_model`; multinomial models add `outcome_level`. |
 | `df_output_RDs` | Formatted risk-difference tables; `NULL` when unavailable. |
 | `plot_output_RDs` | Numeric risk differences and intervals; `NULL` when unavailable. |
 | `df_output_RRs`, `plot_output_RRs` | Formatted and numeric marginal risk ratios with `include_rr = TRUE`; `NULL` when unavailable. |
 | `diagnostics` | Stage, adjustment variables, status, errors, captured warnings, sample size, covariance validity, separation flags and attempt number. |
+
+`Q_value` holds multiple-testing adjusted p-values: Benjamini–Hochberg by
+default, or any `stats::p.adjust()` method through `p_adjust_method`, applied
+within each adjustment stage across every predictor and level (reference rows are
+not tests). `p_adjust_method = "none"` omits the column. The same adjustment is
+applied to the risk-difference and risk-ratio tables, and `ModelMakerMulti()`
+supports it too.
 
 Lower-level tables (from `makeORTable()` and the single-predictor wrappers) keep
 the estimate column name `OR` for compatibility; their `measure` column gives the
@@ -319,7 +326,9 @@ logical, or numeric with at most `outcome_cat_unique_threshold` distinct values
 (default 6). This rule controls table layout, independently of the regression
 `family`, which is passed to `ModelMakerMultiRD()`. `include_rd` defaults to
 `FALSE`; supplying `NULL` enables automatic selection for binary outcomes, and
-`include_rr = TRUE` adds marginal risk ratios. The report ranks associations by p-value,
+`include_rr = TRUE` adds marginal risk ratios. Each report line also shows a
+q-value, adjusted over all the tests that section ranks (every level of each
+predictor's most-adjusted model); `p_adjust_method = NULL` omits them. The report ranks associations by p-value,
 selecting one category per predictor from that predictor's most-adjusted model;
 a predictor that is also a covariate is not adjusted for itself. Treat this
 ranking as exploratory, particularly when adjustment sets are not nested.
