@@ -59,23 +59,32 @@ crossTab <- function(dat, rowvar, colvar, rowvar_levels = NULL,
     tab <- (table(pull(dat,rowvar), pull(dat,colvar)))
   }
   else{
-    tab <- round(.weighted_xtab(pull(dat, rowvar), pull(dat, colvar), pull(dat, weights)), 0)
+    rows <- factor(pull(dat, rowvar))
+    cols <- factor(pull(dat, colvar))
+    w <- pull(dat, weights)
+    weighted_tab <- .weighted_xtab(rows, cols, w)
+    tab <- round(weighted_tab, 0)
+    # Kish effective sample sizes of each row, column and the whole table, so intervals
+    # and the test do not depend on the scale of the weights (as in tableCat()).
+    in_table <- !is.na(rows) & !is.na(cols) & !is.na(w)
+    ess_rows <- vapply(levels(rows), function(l) .kish_ess(w[in_table & rows == l]), numeric(1))
+    ess_cols <- vapply(levels(cols), function(l) .kish_ess(w[in_table & cols == l]), numeric(1))
+    ess_all <- .kish_ess(w[in_table])
   }
 
   # statstical test
   if(statistical_test){
-    pval=chisq.test(tab)
-
+    if(is.null(weights)){
+      pval=chisq.test(tab)
+    }else{
+      pval=chisq.test(weighted_tab * ess_all / sum(weighted_tab))
+    }
   }
+  # Percentages come from the displayed counts, which are weighted when weights are given.
+  tab.prop <- round(100*prop.table(tab, if (rowwise_precentages) 1 else 2), 1) %>%
+    as.data.frame.matrix()
   # add margins
   tab=tab %>% addmargins() %>% as.data.frame.matrix()
-
-  # tab <- addmargins(table(pull(dat,rowvar), pull(dat,colvar))) %>% as.data.frame.matrix()
-  if(rowwise_precentages){
-    tab.prop <- round(100*prop.table(table(pull(dat,rowvar), pull(dat,colvar)),1),1) %>% as.data.frame.matrix()
-  }else{
-    tab.prop <- round(100*prop.table(table(pull(dat,rowvar), pull(dat,colvar)),2),1) %>% as.data.frame.matrix()
-  }
   tab_bu <- tab
   if(comma_thousands){
     tabcomma=lapply(tab, comma_sep) %>% as.data.frame()
@@ -86,11 +95,19 @@ crossTab <- function(dat, rowvar, colvar, rowvar_levels = NULL,
     if(confint){
       for (i in 1:(nrow(tab))){
         for(j in 1:(ncol(tab)-1)){
+          x <- as.numeric(tab_bu[i,j])
           if(rowwise_precentages){
-            ci <- .prop_ci(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[i,ncol(tab_bu)]), method = "wilson")
+            n <- as.numeric(tab_bu[i,ncol(tab_bu)])
+            ess <- if (is.null(weights)) NA else if (i < nrow(tab_bu)) ess_rows[[i]] else ess_all
           }else{
-            ci <- .prop_ci(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[nrow(tab_bu),j]), method = "wilson")
+            n <- as.numeric(tab_bu[nrow(tab_bu),j])
+            ess <- if (is.null(weights)) NA else ess_cols[[j]]
           }
+          if (!is.na(ess) && n > 0) {
+            x <- x / n * ess
+            n <- ess
+          }
+          ci <- .prop_ci(x = x, n = n, method = "wilson")
           tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$p,1),"%, [",round(100*ci$lower,1),"-",round(100*ci$upper,1),"])")
         }
       }
@@ -232,10 +249,12 @@ crossTabMulti <- function(dat, rowvars, colvar=NULL, cov_names=NULL, confint=TRU
   }
 
 
+  if (!length(rowvars)) stop("Supply at least one variable in rowvars.")
   res_list <- list()
-  for (i in 1:length(rowvars)){
+  for (i in seq_along(rowvars)){
     message("Processing ", rowvars[[i]])
-    if(class(pull(dat, rowvars[[i]])) %in% c("integer", "numeric") &
+    # is.numeric() also accepts classed numbers, such as haven's labelled vectors.
+    if(is.numeric(pull(dat, rowvars[[i]])) &&
        !all(names(table(pull(dat, rowvars[[i]]))) %in% c("0", "1"))){
       res <- crossTabContinuous(dat = dat,rowvar = rowvars[[i]], colvar = colvar,summary_stat=summary_stat,
                                 statistical_test=statistical_test)

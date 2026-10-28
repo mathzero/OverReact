@@ -71,6 +71,8 @@ test_that("reporting helpers order, validate and count correctly", {
   bmi <- data.frame(Variable = "BMI category",
                     Category = c("Obese", "Normal weight", "Underweight", "Overweight"))
   expect_identical(orderMyTable(bmi)$Category, c("Underweight", "Normal weight", "Overweight", "Obese"))
+  empty <- data.frame(Variable = character(), Category = character())
+  expect_identical(orderMyTable(empty), empty)
   covid <- data.frame(Variable = "Covid",
                       Category = c("No COVID", "COVID suspected by respondent",
                                    "COVID confirmed by test", "COVID suspected by doctor"))

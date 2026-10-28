@@ -55,7 +55,7 @@ makeTablesNew <- function(dat,
                           pos_val = "1",
                           neg_val = "0",
                           covariates, # character vector naming variables to create tables for
-                          cov_name_list,
+                          cov_name_list = NULL,
                           sens = 1,
                           spec = 1,
                           weights = NULL,
@@ -75,7 +75,7 @@ makeTablesNew <- function(dat,
       message("These covariates are not supplied in your cov_name_list: ", paste(covariates[ind], collapse = ", "))
       message("Using simple variable name instead")
     }else{
-      ind <- rep(F,length(covariates))
+      ind <- rep(FALSE,length(covariates))
     }
   }
 
@@ -94,10 +94,9 @@ makeTablesNew <- function(dat,
   }
   result <- factor(result[keep], levels = c(neg_val, pos_val))
 
-  #  browser()
-  rtn <- list()
-  # i <- 1
-  for (i in 1:length(covariates)){
+  if (!length(covariates)) stop("Supply at least one covariate.")
+  rtn <- vector("list", length(covariates))
+  for (i in seq_along(covariates)){
 
     message("Now processing ", covariates[[i]])
     # generate table of result_var by covariate[i]
@@ -109,6 +108,10 @@ makeTablesNew <- function(dat,
       tab <- round(.weighted_xtab(result, covariate, pull(dat, weights)[keep]), 0)
     }
     tab <- as.data.frame.matrix(tab)
+    if (!ncol(tab)) {
+      message("No observed values of ", covariates[[i]], " - skipping.")
+      next
+    }
 
     # calculate prevalence and confidence intervals
     tab_ci <- add_conf_ints(tab,
@@ -178,6 +181,7 @@ makeTablesNew <- function(dat,
   }
 
   names(rtn) <- covariates
+  rtn <- rtn[!vapply(rtn, is.null, logical(1))]
 
   if(!output_list){
     rtn <- dplyr::bind_rows(rtn)
@@ -196,7 +200,7 @@ stratifiedTables <- function(dat,
                              pos_val = "1",
                              neg_val = "0",
                              covariates, # character vector naming variables to create tables for
-                             cov_name_list,
+                             cov_name_list = NULL,
                              strat_var,
                              sens = 1,
                              spec = 1,
@@ -217,7 +221,7 @@ stratifiedTables <- function(dat,
   }
   result_list <- list()
 
-  for (i in 1:length(uniques)){
+  for (i in seq_along(uniques)){
     prevs <- makeTablesNew(dat=dat[dat[,strat_var]== uniques[[i]],],
                            result_var = result_var, pos_val = pos_val, neg_val = neg_val,
                            covariates = covariates,
@@ -271,7 +275,7 @@ add_conf_ints <- function(tab,method="wilson",poscol="Detected",negcol="Not Dete
   rowUB_adj <- vector(mode="numeric", length=ncols)
   rowLB_adj <- vector(mode="numeric", length=ncols)
   rowAll <- vector(mode="numeric", length=ncols)
-  for (i in 1:ncols) {
+  for (i in seq_len(ncols)) {
     tmpbin <- .prop_ci(x = tab[poscol,i],
                        n = tab[poscol,i] + tab[negcol,i],
                        method=method)
@@ -317,6 +321,7 @@ makeStratifiedPrevalenceTablePlottable <- function(tab){
 
 orderMyTable <-  function(tab){
   out.list <- list()
+  if (!nrow(tab)) return(tab)
 
   if("Level" %in% colnames(tab)){
     tab$Category <-  tab$Level
@@ -335,7 +340,7 @@ orderMyTable <-  function(tab){
   # done #
 
 
-  for(i in 1:length(unique(tab$Variable))){
+  for(i in seq_along(unique(tab$Variable))){
     varr=unique(tab$Variable)[[i]]
     df_subset <- tab %>% filter(Variable == varr)
     levs=stringr::word(unique(df_subset$Category),1)

@@ -73,6 +73,13 @@
 * Checkpoint files are written atomically without using the session RNG.
 * Weighted `crossTabContinuous()` no longer errors when the grouping variable
   has missing values.
+* Weighted `crossTab()` percentages come from the weighted counts (they used
+  unweighted counts), and its intervals and chi-squared test use Kish effective
+  sample sizes.
+* `crossTabMulti()` accepts classed numeric columns, such as haven's labelled
+  vectors.
+* `makeTablesNew()` and `stratifiedTables()` no longer require
+  `cov_name_list`, and skip covariates with no observed values.
 * `pvalAsterisker()` and `pValEpiConverter()` keep missing p-values missing
   (they were labelled "ns") and print small thresholds as `<0.0001`.
 * `theme_react()` and `theme_mw()` honour `base_size`, `strip_text_margin` and

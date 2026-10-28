@@ -68,3 +68,18 @@ test_that("weighted prevalence tables sum the weights", {
   expect_equal(out$Positive, c(2, 3))
   expect_equal(out$Total, c(3, 5))
 })
+
+test_that("makeTablesNew needs no labels and skips covariates with no observed values", {
+  dat <- make_prevalence_test_data(n = 200)
+  dat$blank <- NA_character_
+  out <- quietly(makeTablesNew(dat, covariates = c("blank", "sex"), output_list = FALSE))
+  expect_identical(unique(out$Variable), "sex")
+  messages <- capture_messages(makeTablesNew(dat, covariates = c("blank", "sex")))
+  expect_match(messages, "No observed values of blank", all = FALSE)
+  expect_named(quietly(makeTablesNew(dat, covariates = c("sex", "blank"))), "sex")
+  expect_error(makeTablesNew(dat, covariates = character()), "at least one covariate")
+
+  dat$wave <- rep(c("w1", "w2"), length.out = nrow(dat))
+  strat <- quietly(stratifiedTables(dat, covariates = "sex", strat_var = "wave"))
+  expect_named(strat, c("Variable", "Category", "w1", "w2"))
+})

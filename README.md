@@ -315,10 +315,10 @@ Numeric `makeTablesNew()` output contains `Positive`, `Total`, `Prevalence`,
 `Lower` and `Upper`; prevalence columns refer to assay-adjusted estimates, which
 equal the observed estimates under the defaults. `percent = TRUE` expresses these
 on a percentage scale. `for_report = TRUE` returns observed and adjusted
-estimates as formatted percentage intervals. Supply `cov_name_list` explicitly,
-including `NULL` when labels are unnecessary. `pos_val` and `neg_val` name the
-outcome's positive and negative values; other values, such as missing-data
-codes, are excluded.
+estimates as formatted percentage intervals. `cov_name_list` is optional, and
+covariates with no observed values are skipped with a message. `pos_val` and
+`neg_val` name the outcome's positive and negative values; other values, such as
+missing-data codes, are excluded.
 
 Weighted counts are rounded before binomial interval calculation. This is not
 survey-design inference. `stratifiedTables()` forwards outcome coding, assay
@@ -459,7 +459,7 @@ the current descriptive and modelling interfaces.
 
 | Function | Behaviour and limitations |
 | --- | --- |
-| `crossTab()` | Categorical counts, margins, percentages, optional Wilson intervals and a chi-squared p-value. Uses the spelling `rowwise_precentages`. With weights and `confint = FALSE`, percentages are currently calculated from unweighted counts. |
+| `crossTab()` | Categorical counts, margins, percentages, optional Wilson intervals and a chi-squared p-value. Uses the spelling `rowwise_precentages`. With weights, counts are weighted and rounded, percentages come from those counts, and intervals and the chi-squared test use Kish effective sample sizes. |
 | `crossTabContinuous()` | Group-specific mean (SD) or median (IQR), pooled summaries and optional ANOVA. Weights affect group means and SDs only; pooled summaries and medians remain unweighted. |
 | `crossTabMulti()` | Combine legacy categorical and continuous cross-tabs into `Variable`/`Category` rows with a `Pooled` column. `rowvar_list` is deprecated in favour of `rowvars`; continuous weights are not forwarded. |
 | `xtabPercentageExtractor()` | Extract text or numeric values between configurable regular-expression delimiters, commonly percentages or interval bounds. |

@@ -10,7 +10,7 @@ makeTablesNew(
   pos_val = "1",
   neg_val = "0",
   covariates,
-  cov_name_list,
+  cov_name_list = NULL,
   sens = 1,
   spec = 1,
   weights = NULL,
