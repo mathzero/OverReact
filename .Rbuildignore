@@ -6,3 +6,12 @@
 ^OverReact_.*\.tar\.gz$
 ^test2\.xlsx$
 ^demo/report\.txt$
+^.*\.Rcheck$
+^Rplots\.pdf$
+^\.vscode$
+^\.github$
+^LICENSE\.md$
+^NEWS\.md$
+^demo/misc\.R$
+^demo/demo\.qmd$
+^demo/\.quarto$

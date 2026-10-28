@@ -2,3 +2,11 @@
 .Rhistory
 .RData
 .Ruserdata
+.DS_Store
+.vscode/
+*.Rcheck/
+OverReact_*.tar.gz
+Rplots.pdf
+test2.xlsx
+demo/misc.R
+demo/report.txt
