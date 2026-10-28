@@ -15,6 +15,9 @@
   non-log links are no longer exponentiated.
 * `plotReactForest()` plots RR and IRR estimates on a ratio scale and labels
   multinomial rows with their outcome level.
+* `plotReactForest(show_estimates = TRUE)` prints each row's estimate (95% CI),
+  p-value and N beside the plot, from the last plotted model or
+  `estimate_adjustment`.
 * `tableOne()` picks tests to suit the data: Fisher's exact test when any
   expected count is below 5 and Kruskal-Wallis for median summaries
   (`cat_test`, `cont_test` override), records them in a `"tests"` attribute,

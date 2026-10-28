@@ -13,6 +13,8 @@ utils::globalVariables(c(
   "myshape",
   "row_in_panel",
   "stripe_col",
+  "estimate_text",
+  "header",
   "Level",
   "Lower",
   "Missing",

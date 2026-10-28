@@ -349,7 +349,7 @@ See [the driver](R/automated_analysis.R).
 
 | Function | Purpose and output |
 | --- | --- |
-| `plotReactForest()` | Create a forest plot from batch-model results, numeric plotting data, an `lm`/`glm`/`gam` fit, or a named list of fits. Supports `effect = "OR"`, `"RR"`, `"IRR"`, `"Beta"` or `"RD"`, adjustment labels, reference rows and variable selection. |
+| `plotReactForest()` | Create a forest plot from batch-model results, numeric plotting data, an `lm`/`glm`/`gam` fit, or a named list of fits. Supports `effect = "OR"`, `"RR"`, `"IRR"`, `"Beta"` or `"RD"`, adjustment labels, reference rows, variable selection and an optional column of estimates, intervals, p-values and sample sizes. |
 | `plotReactVIF()` | Plot externally supplied variance inflation factors by adjustment stage. Requires `Variable`, `adjustment` and `vif`; batch model wrappers do not currently return VIFs. |
 | `theme_react()` | Apply the REACT theme with white backgrounds, small text and configurable base size, facet and title styling; further theme elements can be passed through `...`. |
 | `theme_mw()` | Apply a related theme with panel borders, ticks and configurable grids and legend placement; a numeric `legend.position` places the legend inside the panel. |
@@ -363,7 +363,8 @@ See [the driver](R/automated_analysis.R).
 | `pick_fallback_colours()` | Select additional qualitative HCL colours, favouring separation from existing colours in CIELAB space. |
 
 ```r
-forest <- plotReactForest(models, effect = "OR", title = "Adjusted associations")
+forest <- plotReactForest(models, effect = "OR", title = "Adjusted associations",
+                          show_estimates = TRUE)
 forest
 
 # Risk differences from the same fitted models.
@@ -378,7 +379,10 @@ ggplot2::ggplot(clinical, ggplot2::aes(x = age, fill = sex)) +
 Forest plots use a logarithmic scale with null value 1 for ratios (OR, RR,
 IRR), and linear coefficient or risk-difference scales with null value 0. For a
 batch result, `effect = "RR"` plots the marginal risk ratios when they were
-requested, and multinomial rows are labelled with their outcome level. `xrange`
+requested, and multinomial rows are labelled with their outcome level.
+`show_estimates = TRUE` adds a column to the right of each panel giving every
+row's estimate (95% CI), p-value and N, from the last plotted model or the stage
+named by `estimate_adjustment`; `estimate_digits` sets the decimal places. `xrange`
 sets the visible ratio range (default 1/4 to 16); estimates or interval bounds beyond
 it are clipped at the panel edge, with a warning. Pass numeric
 `plot_output` data rather than formatted table strings.

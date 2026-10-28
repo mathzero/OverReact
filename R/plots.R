@@ -67,7 +67,7 @@ plotReactVIF <- function(vif_df,
                        space  = "free",
                        shrink = TRUE,
                        drop   = TRUE) +
-    OverReact::theme_react(strip_text_size = strip_text_size) +
+    theme_react(strip_text_size = strip_text_size) +
     ggplot2::labs(x     = "Number of covariates in model",
                   y     = "Variance inflation factor",
                   colour = "") +
@@ -106,6 +106,21 @@ plotReactVIF <- function(vif_df,
     out <- tryCatch(name_fun(out), error = function(e) out)
   }
   out
+}
+
+
+# Text for the forest plot's estimate column, keyed by row: "estimate (lower, upper),
+# p=..., N=..." for rows with an estimate, blank for reference rows.
+.react_forest_estimate_labels <- function(rows, digits = 2) {
+  fixed <- function(x) formatC(x, format = "f", digits = digits)
+  p_text <- ifelse(is.na(rows$P_value), "",
+                   ifelse(rows$P_value < 0.001, ", p<0.001", paste0(", p=", formatC(rows$P_value, format = "f", digits = 3))))
+  n_text <- if ("Nobs_in_model" %in% names(rows)) {
+    ifelse(is.na(rows$Nobs_in_model), "", paste0(", N=", formatC(rows$Nobs_in_model, format = "d", big.mark = ",")))
+  } else ""
+  text <- paste0(fixed(rows$effect_value), " (", fixed(rows$Lower), ", ", fixed(rows$Upper), ")", p_text, n_text)
+  text[is.na(rows$effect_value)] <- ""
+  stats::setNames(text, as.character(rows$Category_key))
 }
 
 
@@ -242,6 +257,7 @@ plotReactVIF <- function(vif_df,
   if ("term_raw" %in% names(df)) std$term_raw <- as.character(df$term_raw)
   if ("is_reference" %in% names(df)) std$is_reference <- as.logical(df$is_reference)
   if ("is_intercept" %in% names(df)) std$is_intercept <- as.logical(df$is_intercept)
+  if ("Nobs_in_model" %in% names(df)) std$Nobs_in_model <- suppressWarnings(as.numeric(df$Nobs_in_model))
 
   std$.input_order <- seq_len(nrow(std))
   std <- .react_apply_adjustment_labels(std, adjustment_labels = adjustment_labels)
@@ -423,6 +439,7 @@ plotReactVIF <- function(vif_df,
   out$adjustment_label <- if (is.null(adjustment_label)) "Model" else adjustment_label
   out$adjustment <- if (is.null(adjustment)) 0L else adjustment
   out$.input_order <- seq_len(nrow(out))
+  out$Nobs_in_model <- tryCatch(stats::nobs(model), error = function(e) NA_real_)
 
   attr(out, "effect_name") <- effect_name
   out
@@ -550,7 +567,10 @@ plotReactForest <- function(univ_df_plot,
                             title = NULL,
                             subtitle = NULL,
                             xlab = NULL,
-                            null_value = NULL) {
+                            null_value = NULL,
+                            show_estimates = FALSE,
+                            estimate_adjustment = NULL,
+                            estimate_digits = NULL) {
   if (!requireNamespace("dplyr", quietly = TRUE)) stop("Please install dplyr.")
   if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Please install ggplot2.")
   if (!requireNamespace("ggforce", quietly = TRUE)) stop("Please install ggforce.")
@@ -749,6 +769,29 @@ plotReactForest <- function(univ_df_plot,
     )))
   }
 
+  # Estimate column: each row's estimate (95% CI), p and N from one model, written just
+  # beyond the right edge of the panel (clipping is turned off for it), so the text lines
+  # up with its row in every facet.
+  if (isTRUE(show_estimates)) {
+    focus <- if (is.null(estimate_adjustment)) adjustment_numbers[length(adjustment_numbers)] else as.character(estimate_adjustment)
+    if (!focus %in% plot_df$adjustment) {
+      stop("estimate_adjustment ", focus, " is not among the plotted adjustment_numbers.")
+    }
+    if (is.null(estimate_digits)) estimate_digits <- if (identical(effect_name, "RD")) 3 else 2
+    estimate_rows <- plot_df[plot_df$adjustment == focus, , drop = FALSE]
+    estimate_rows$estimate_text <- unname(.react_forest_estimate_labels(estimate_rows, digits = estimate_digits))
+    estimate_header <- paste0(effect_name, " (95% CI), p",
+                              if ("Nobs_in_model" %in% names(plot_df)) ", N" else "")
+    # The text needs a fixed visible range to sit beyond.
+    if (is.null(xrange)) {
+      xrange <- range(c(plot_df$effect_value, plot_df$Lower, plot_df$Upper, null_value), na.rm = TRUE)
+    }
+    estimate_y <- if (ratio_scale) xrange[[2]] * (xrange[[2]] / xrange[[1]])^0.08 else xrange[[2]] + 0.08 * diff(xrange)
+    estimate_header_row <- data.frame(Variable = factor(var_levels[1], levels = var_levels),
+                                      header = estimate_header)
+    estimate_width_pt <- 8 * 0.55 * max(nchar(c(estimate_rows$estimate_text, estimate_header))) + 12
+  }
+
   p <- ggplot2::ggplot(
     plot_df,
     ggplot2::aes(x = Category_key, y = effect_value, colour = adjust_desc, group = adjust_desc)
@@ -769,7 +812,7 @@ plotReactForest <- function(univ_df_plot,
       linewidth = 0.2,
       na.rm = TRUE
     ) +
-    ggplot2::coord_flip(ylim = xrange) +
+    ggplot2::coord_flip(ylim = xrange, clip = if (isTRUE(show_estimates)) "off" else "on") +
     ggplot2::scale_shape_manual(values = c(light = 0, dark = 15), guide = "none") +
     ggforce::facet_col(
       facets = ggplot2::vars(Variable),
@@ -799,6 +842,21 @@ plotReactForest <- function(univ_df_plot,
       )
     ) +
     ggplot2::scale_alpha_manual(values = c(dark = 1, light = 0.3), guide = "none")
+
+  if (isTRUE(show_estimates)) {
+    p <- p +
+      ggplot2::geom_text(
+        data = estimate_rows,
+        ggplot2::aes(x = Category_key, y = estimate_y, label = estimate_text),
+        inherit.aes = FALSE, hjust = 0, size = 8 / ggplot2::.pt
+      ) +
+      ggplot2::geom_text(
+        data = estimate_header_row,
+        ggplot2::aes(x = Inf, y = estimate_y, label = header),
+        inherit.aes = FALSE, hjust = 0, vjust = -0.6, size = 8 / ggplot2::.pt, fontface = "bold"
+      ) +
+      ggplot2::theme(plot.margin = ggplot2::margin(5.5, estimate_width_pt, 5.5, 5.5))
+  }
 
   if (ratio_scale) {
     breaks <- 2 ^ seq(log2(xrange[[1]]), log2(xrange[[2]]))
