@@ -59,12 +59,7 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
     tab <- (table(pull(dat,rowvar), pull(dat,colvar)))
   }
   else{
-    tab <- (round(questionr::wtd.table(x=pull(dat,rowvar),
-                                       y= pull(dat,colvar),
-                                       weights = pull(dat, weights),
-                                       normwt = F,
-                                       na.rm = T,
-                                       na.show = F),0))
+    tab <- round(.weighted_xtab(pull(dat, rowvar), pull(dat, colvar), pull(dat, weights)), 0)
   }
 
   # statstical test
@@ -92,9 +87,9 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
       for (i in 1:(nrow(tab))){
         for(j in 1:(ncol(tab)-1)){
           if(rowwise_precentages){
-            ci <- prevalence::propCI(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[i,ncol(tab_bu)]), method = "wilson")
+            ci <- .prop_ci(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[i,ncol(tab_bu)]), method = "wilson")
           }else{
-            ci <- prevalence::propCI(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[nrow(tab_bu),j]), method = "wilson")
+            ci <- .prop_ci(x=as.numeric(tab_bu[i,j]), n = as.numeric(tab_bu[nrow(tab_bu),j]), method = "wilson")
           }
           tab[i,j] <-  paste0(tab[i,j], " (",round(100*ci$p,1),"%, [",round(100*ci$lower,1),"-",round(100*ci$upper,1),"])")
         }
@@ -146,12 +141,12 @@ crossTabContinuous <- function(dat = dfRes, rowvar, colvar=NULL, weights = NULL,
     if(!is.null(weights)){
       means <- sapply(split(dat,as.factor(pull(dat,colvar))), function(x) stats::weighted.mean(pull(x, rowvar),pull(x, weights), na.rm=T)) %>%
         as.table()%>% as.data.frame()
-      sds <- plyr::ddply(
-        dat,
-        colvar,
-        function(x) .weighted_var(pull(x, rowvar), pull(x, weights))
-      ) %>%
-        as.data.frame()
+      groups <- split(dat, as.factor(pull(dat, colvar)))
+      sds <- data.frame(
+        Var1 = names(groups),
+        Freq = vapply(groups, function(x) .weighted_var(pull(x, rowvar), pull(x, weights)), numeric(1)),
+        stringsAsFactors = FALSE
+      )
       means$Freq <- round(means$Freq,2)
       # root variance to get sd
       colnames(sds) <- colnames(means)

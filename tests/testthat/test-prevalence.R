@@ -52,3 +52,22 @@ test_that("stratifiedTables forwards outcome coding", {
                                   cov_name_list = NULL, strat_var = "region"))
   expect_named(out, c("Variable", "Category", "North", "South"))
 })
+
+test_that("prevalence intervals keep the earlier propCI conventions", {
+  tab <- matrix(c(50, 0, 43, 7), nrow = 2, dimnames = list(c("0", "1"), c("a", "b")))
+  out <- add_conf_ints(tab, poscol = "1", negcol = "0")
+  z <- qnorm(0.95)
+  # With no positives, the upper Wilson limit is the one-sided 95% bound.
+  expect_equal(out["a", "lb"], 0)
+  expect_equal(out["a", "ub"], z^2 / (50 + z^2))
+  expect_equal(out["b", "lb"], calculate_prop_ci(7, 50)$lower)
+  expect_equal(out["b", "ub"], calculate_prop_ci(7, 50)$upper)
+})
+
+test_that("weighted prevalence tables sum the weights", {
+  dat <- data.frame(res = c(1, 0, 1, 0, 0), g = c("a", "a", "b", "b", "b"), w = c(2, 1, 3, 1, 1))
+  out <- quietly(makeTablesNew(dat, covariates = "g", cov_name_list = NULL, weights = "w",
+                               output_list = FALSE))
+  expect_equal(out$Positive, c(2, 3))
+  expect_equal(out$Total, c(3, 5))
+})

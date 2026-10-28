@@ -106,12 +106,7 @@ makeTablesNew <- function(dat = dfRes,
       tab <- table(result, covariate)
     }
     else{
-      tab <- round(questionr::wtd.table(x=result,
-                             y=covariate,
-                             weights = pull(dat, weights)[keep],
-                             normwt = F,
-                             na.rm = T,
-                             na.show = F),0)
+      tab <- round(.weighted_xtab(result, covariate, pull(dat, weights)[keep]), 0)
     }
     tab <- as.data.frame.matrix(tab)
 
@@ -277,9 +272,9 @@ add_conf_ints <- function(tab,method="wilson",poscol="Detected",negcol="Not Dete
   rowLB_adj <- vector(mode="numeric", length=ncols)
   rowAll <- vector(mode="numeric", length=ncols)
   for (i in 1:ncols) {
-    tmpbin <- prevalence::propCI(x = tab[poscol,i],
-                                 n = tab[poscol,i] + tab[negcol,i],
-                                 method=method)
+    tmpbin <- .prop_ci(x = tab[poscol,i],
+                       n = tab[poscol,i] + tab[negcol,i],
+                       method=method)
     rowP[i] <- as.numeric(tmpbin$p)
     rowUB[i] <- as.numeric(tmpbin$upper)
     rowLB[i] <- as.numeric(tmpbin$lower)

@@ -63,7 +63,36 @@
   z2 <- z^2
   center <- (p + z2 / (2 * n)) / (1 + z2 / n)
   margin <- z * sqrt((p * (1 - p) / n) + (z2 / (4 * n^2))) / (1 + z2 / n)
-  list(proportion = p, lower = center - margin, upper = center + margin)
+  # Clamp floating-point error, so 0 of n never gives a lower bound printed as -0.0.
+  list(proportion = p, lower = max(0, center - margin), upper = min(1, center + margin))
+}
+
+# Binomial proportion and 95% interval for x of n: Wilson (default), exact
+# Clopper-Pearson, or Wald. Undefined (NA) bounds when n is 0. As in
+# prevalence::propCI(), which this replaces, a Wilson interval at x = 0 or x = n has its
+# one finite limit set at the one-sided 95% level.
+.prop_ci <- function(x, n, method = "wilson") {
+  method <- match.arg(method, c("wilson", "exact", "clopper-pearson", "wald"))
+  p <- x / n
+  if (is.na(n) || n <= 0) return(list(p = p, lower = NA_real_, upper = NA_real_))
+  bounds <- switch(method,
+    wilson = unlist(.wilson_interval(p, n, z = qnorm(if (x <= 0 || x >= n) 0.95 else 0.975))[
+      c("lower", "upper")]),
+    exact = ,
+    `clopper-pearson` = c(if (x <= 0) 0 else qbeta(0.025, x, n - x + 1),
+                          if (x >= n) 1 else qbeta(0.975, x + 1, n - x)),
+    wald = p + c(-1, 1) * qnorm(0.975) * sqrt(p * (1 - p) / n)
+  )
+  list(p = p, lower = max(0, bounds[[1]]), upper = min(1, bounds[[2]]))
+}
+
+# Weighted two-way table of x by y. Unused factor levels are kept; observations with a
+# missing x, y or weight are excluded.
+.weighted_xtab <- function(x, y, weights) {
+  x <- if (is.factor(x)) x else factor(x)
+  y <- if (is.factor(y)) y else factor(y)
+  ok <- !is.na(x) & !is.na(y) & !is.na(weights)
+  as.table(tapply(weights[ok], list(x[ok], y[ok]), sum, default = 0))
 }
 
 .safe_chisq <- function(tab, rowvar, colvar) {
