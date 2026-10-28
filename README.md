@@ -24,14 +24,15 @@ REACT-specific variable names.
 
 | Task | Principal functions |
 | --- | --- |
-| Describe a study population | `tableOne()`, `tableCat()`, `tableCont()` |
-| Estimate associations | `ModelMakerMulti()`, `ModelMakerMultiRD()` |
+| Describe a study population | `tableOne()`, `tableCat()`, `tableCont()`, `tableOneDisplay()` |
+| Estimate associations | `ModelMakerMulti()`, `ModelMakerMultiRD()`, `makeRDTable()`, `makeRRTable()` |
 | Estimate prevalence | `makeTablesNew()`, `stratifiedTables()` |
 | Combine description and regression | `run_auto_tableone_regressions()` |
 | Plot estimates and diagnostics | `plotReactForest()`, `plotReactVIF()` |
 | Export results | `saveREACTtable()`, `saveREACTplot()`, `savePrettyExcelWorkbook()` |
 
-The examples below use synthetic data:
+`vignette("OverReact")` walks through a complete analysis. The examples below use
+synthetic data:
 
 ```r
 set.seed(42)
@@ -364,7 +365,7 @@ See [the driver](R/automated_analysis.R).
 
 ```r
 forest <- plotReactForest(models, effect = "OR", title = "Adjusted associations",
-                          show_estimates = TRUE)
+                          xrange = c(1 / 8, 8), show_estimates = TRUE)
 forest
 
 # Risk differences from the same fitted models.

@@ -18,9 +18,12 @@ Suggests:
     data.table,
     flextable,
     gt,
+    knitr,
     nnet,
+    rmarkdown,
     sandwich,
     testthat (>= 3.0.0)
+VignetteBuilder: knitr
 Imports:
     dplyr,
     ggforce,

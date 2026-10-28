@@ -13,5 +13,6 @@
 ^LICENSE\.md$
 ^NEWS\.md$
 ^demo/misc\.R$
-^demo/demo\.qmd$
 ^demo/\.quarto$
+^doc$
+^Meta$

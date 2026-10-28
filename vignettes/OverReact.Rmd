@@ -1,0 +1,231 @@
+---
+title: "Getting started with OverReact"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with OverReact}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7.5, fig.height = 4.5,
+                      message = FALSE)
+```
+
+This vignette walks through a typical analysis with OverReact: cleaning inputs,
+describing the study population, estimating prevalence, fitting crude and adjusted
+models, plotting them and exporting the results. It uses simulated data.
+
+```{r setup}
+library(OverReact)
+library(ggplot2)
+set.seed(123)
+```
+
+## Simulated data
+
+```{r data}
+n <- 1000
+dat <- data.frame(
+  age_years = round(rnorm(n, mean = 50, sd = 15)),
+  sex = factor(sample(c("Female", "Male"), n, replace = TRUE)),
+  region = factor(sample(c("North", "Midlands", "South"), n, replace = TRUE,
+                         prob = c(0.30, 0.30, 0.40))),
+  deprivation = factor(sample(paste0("Q", 1:5), n, replace = TRUE), levels = paste0("Q", 1:5)),
+  smoking_status = factor(sample(c("Never", "Former", "Current"), n, replace = TRUE,
+                                 prob = c(0.55, 0.25, 0.20)),
+                          levels = c("Never", "Former", "Current")),
+  exposure_primary = rnorm(n),
+  bmi = rnorm(n, mean = 27, sd = 4),
+  follow_up_years = runif(n, 0.5, 3),
+  sample_date_chr = format(as.Date("2022-01-01") + sample(0:120, n, replace = TRUE), "%d/%m/%Y"),
+  binary_1_2 = sample(c(1, 2), n, replace = TRUE, prob = c(0.25, 0.75)),
+  continuous_dirty = ifelse(runif(n) < 0.03, -1, rnorm(n, mean = 10, sd = 3))
+)
+
+linpred <- -1.1 + 0.55 * dat$exposure_primary + 0.03 * (dat$age_years - 50) +
+  0.35 * (dat$sex == "Male") + 0.45 * (dat$smoking_status == "Current") +
+  0.25 * (dat$region == "North")
+dat$outcome_bin <- rbinom(n, size = 1, prob = plogis(linpred))
+dat$outcome_group <- factor(dat$outcome_bin, levels = c(0, 1), labels = c("Negative", "Positive"))
+dat$infections <- rpois(n, dat$follow_up_years * exp(-1 + 0.3 * dat$exposure_primary))
+dat$severity <- factor(sample(c("None", "Mild", "Severe"), n, replace = TRUE),
+                       levels = c("None", "Mild", "Severe"))
+
+dat$region[sample(seq_len(n), 15)] <- NA
+dat$smoking_status[sample(seq_len(n), 20)] <- NA
+attr(dat$exposure_primary, "label") <- "Primary exposure score"
+
+labels <- c(age_years = "Age (years)", sex = "Sex", region = "Region",
+            smoking_status = "Smoking status", bmi = "Body mass index",
+            deprivation = "Deprivation quintile")
+```
+
+## Cleaning helpers
+
+The cleaners recode survey-style values: `binaryCleaner()` maps 1/2 to 1/0,
+`continuousCleaner()` drops values below a floor, and `dateCleaner()` treats
+the REACT missing-value codes as missing.
+
+```{r cleaning}
+data.frame(
+  raw_binary = dat$binary_1_2[1:6],
+  binary = binaryCleaner(dat$binary_1_2[1:6]),
+  raw_continuous = round(dat$continuous_dirty[1:6], 2),
+  continuous = continuousCleaner(dat$continuous_dirty[1:6], floornumber = 0),
+  date = dateCleaner(dat$sample_date_chr[1:6], dateFormat = "%d/%m/%Y")
+)
+```
+
+## Describing the population
+
+`tableOne()` summarises each variable overall and by group. With
+`statistical_test = TRUE`, the tests follow the data (Fisher's exact test for
+sparse tables, Kruskal-Wallis for medians), and `smd = TRUE` adds standardised
+mean differences.
+
+```{r table-one}
+table_one <- tableOne(
+  dat = dat,
+  rowvars = c("age_years", "bmi", "sex", "smoking_status", "region"),
+  colvar = "outcome_group",
+  cov_names = labels,
+  statistical_test = TRUE,
+  smd = TRUE
+)
+knitr::kable(table_one, digits = 3)
+attr(table_one, "tests")
+```
+
+`tableOneDisplay()` turns the result into a gt table for HTML, or a flextable for Word.
+
+```{r table-one-display, eval = requireNamespace("gt", quietly = TRUE)}
+tableOneDisplay(table_one, output = "gt", title = "Characteristics by outcome")
+```
+
+## Prevalence
+
+`makeTablesNew()` estimates prevalence with Wilson intervals. Its defaults apply no
+assay correction; supply `sens` and `spec` to correct for test performance.
+
+```{r prevalence}
+prevalence <- makeTablesNew(
+  dat = dat,
+  result_var = "outcome_bin",
+  covariates = c("sex", "smoking_status"),
+  cov_name_list = labels,
+  output_list = FALSE
+)
+knitr::kable(prevalence)
+```
+
+## Crude and adjusted models
+
+`ModelMakerMultiRD()` fits each predictor in turn, adding adjusters one at a time.
+For a binary outcome it also gives marginal risk differences and, with
+`include_rr = TRUE`, marginal risk ratios. Every table carries Benjamini-Hochberg
+q-values within each adjustment stage.
+
+```{r models}
+models <- ModelMakerMultiRD(
+  dat = dat,
+  list_of_variables_of_interest = c("exposure_primary", "smoking_status", "bmi"),
+  outcome = "outcome_bin",
+  joint_adjustment_vars = c("age_years", "sex", "region"),
+  cov_name_list = labels,
+  include_rd = TRUE,
+  include_rr = TRUE,
+  ncores = 1
+)
+knitr::kable(models$df_output)
+knitr::kable(head(models$plot_output[, c("Variable", "Category", "adjustment_label",
+                                         "OR", "Lower", "Upper", "P_value", "Q_value")]),
+             digits = 3)
+```
+
+The `family` argument selects other models: Poisson rates with an offset,
+risk ratios from a modified Poisson model, and ordinal or multinomial models for
+categorical outcomes.
+
+```{r families}
+rates <- ModelMakerMultiRD(dat, "exposure_primary", outcome = "infections",
+                           joint_adjustment_vars = c("age_years", "sex"),
+                           family = "poisson", offset = "follow_up_years", ncores = 1)
+knitr::kable(rates$df_output)
+
+severity <- ModelMakerMultiRD(dat, "smoking_status", outcome = "severity",
+                              joint_adjustment_vars = "age_years", ncores = 1)
+knitr::kable(severity$df_output)
+```
+
+## Forest plots
+
+`plotReactForest()` takes batch results, plotting data or fitted models.
+`show_estimates = TRUE` prints each row's estimate, interval, p-value and N.
+
+```{r forest}
+plotReactForest(
+  models,
+  adjustment_numbers = c(0, 3),
+  adjustment_descriptions = c("Crude", "Adjusted for age, sex and region"),
+  show_estimates = TRUE,
+  title = "Associations with the outcome"
+)
+```
+
+```{r forest-rd}
+plotReactForest(models, effect = "RD", adjustment_numbers = c(0, 3),
+                adjustment_descriptions = c("Crude", "Adjusted"),
+                title = "Marginal risk differences")
+```
+
+Fitted models can be compared directly; each list element becomes one adjustment level.
+
+```{r forest-models}
+model_list <- list(
+  Crude = glm(outcome_bin ~ exposure_primary + smoking_status, binomial, dat),
+  Adjusted = glm(outcome_bin ~ exposure_primary + smoking_status + age_years + sex,
+                 binomial, dat)
+)
+plotReactForest(model_list, variables = c("exposure_primary", "smoking_status"))
+```
+
+## Automated report
+
+`run_auto_tableone_regressions()` combines the descriptive table and the models, and
+writes a short report ranking each predictor's most-adjusted association.
+
+```{r report, results = "asis"}
+auto <- run_auto_tableone_regressions(
+  dat = dat,
+  outcome = "outcome_bin",
+  covariates = c("age_years", "sex"),
+  independent_variables = c("exposure_primary", "smoking_status", "bmi", "age_years"),
+  include_rd = TRUE,
+  ncores = 1
+)
+cat(auto$report_markdown)
+```
+
+## Themes and palettes
+
+```{r themes}
+ggplot(dat, aes(x = sex, y = exposure_primary, fill = sex)) +
+  geom_boxplot(width = 0.6) +
+  scale_fill_imperial(palette = "cool") +
+  theme_react() +
+  labs(title = "theme_react() with an Imperial palette", x = NULL, y = "Primary exposure score")
+```
+
+## Export
+
+Exports write to the paths you give; here, a temporary directory.
+
+```{r export}
+out_dir <- file.path(tempdir(), "overreact-vignette")
+dir.create(out_dir, showWarnings = FALSE)
+saveREACTtable(prevalence, outpath = out_dir, filename = "prevalence")
+savePrettyExcelWorkbook(list(`Table 1` = table_one, Prevalence = prevalence),
+                        workbookName = "tables", outpath = out_dir)
+sort(list.files(out_dir))
+```

@@ -97,3 +97,5 @@
 * prevalence (which needs a system JAGS install), questionr and plyr are no
   longer dependencies; base-R replacements give identical results.
 * GitHub Actions run `R CMD check` on push and pull request.
+* The Quarto demo notebook is now the package vignette, `vignette("OverReact")`,
+  updated for the current interface.
