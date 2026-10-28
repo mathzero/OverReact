@@ -58,6 +58,12 @@ pick_fallback_colours(n, existing = character(), fallback_palette = "Dynamic",
   \item{candidate_pool}{Minimum number of candidate colours considered.}
 }
 \details{
+Palettes are meant for marks on the white background of \code{theme_react()}, so
+they leave out the two colours that are nearly invisible on white
+(\code{White_Smoke} and \code{Yellow}, contrast ratio below 1.1); both remain
+available through \code{imperial_cols()}. The pastel palettes (\code{soft},
+\code{two_col_pink_purple}) have low contrast and suit filled areas with outlines.
+
 \code{scale_color_imperial} and \code{scale_fill_imperial} are aliases of
 \code{scale_color_new} and \code{scale_fill_new}. Extra discrete colours are
 chosen greedily to maximise their minimum CIELAB distance from the colours

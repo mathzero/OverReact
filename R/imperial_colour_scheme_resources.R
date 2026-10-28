@@ -36,6 +36,9 @@ imperial_cols <- function(...) {
   imperial_colours[cols]
 }
 
+# Palettes are for marks drawn on the themes' white background, so they leave out
+# White_Smoke and Yellow: both are nearly invisible on white (contrast ratio below 1.1).
+# They remain available through imperial_cols().
 imperial_palettes <- list(
   `default` = imperial_cols(
     "Imperial_Blue",
@@ -80,12 +83,10 @@ imperial_palettes <- list(
     "Orange_Red",
     "Dark_Orange",
     "Salmon",
-    "Crimson",
-    "Yellow"
+    "Crimson"
   ),
 
   `soft` = imperial_cols(
-    "White_Smoke",
     "Lavender",
     "Light_Pink",
     "Pale_Turquoise",

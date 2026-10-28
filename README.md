@@ -390,7 +390,9 @@ it are clipped at the panel edge, with a warning. Pass numeric
 `imperial_colours` stores named hexadecimal colours; `imperial_palettes` stores
 palette definitions. Available palettes are `default`, `gradient`, `earth`,
 `cool`, `warm`, `soft`, `bold`, `nature`, `two_col_grey_teal`,
-`two_col_pink_purple` and `two_col_blue_green`. Discrete palettes extend by
+`two_col_pink_purple` and `two_col_blue_green`. Palettes leave out the two colours
+that are nearly invisible on the white theme (`White_Smoke` and `Yellow`), which
+remain available through `imperial_cols()`. Discrete palettes extend by
 default; `fallback = FALSE` enforces the original palette length.
 See [plots](R/plots.R), [themes](R/ggplot_themes.R) and
 [palette functions](R/imperial_colour_scheme_functions.R).

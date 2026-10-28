@@ -53,6 +53,9 @@
 
 ## Bug fixes
 
+* The `soft` and `warm` palettes no longer start or end with colours that are
+  nearly invisible on the white theme (`White_Smoke`, `Yellow`); they have four
+  colours, extended by the HCL fallback when more are needed.
 * Numeric-predictor risk differences are now average marginal effects.
 * `run_auto_tableone_regressions()` reports every predictor, including those
   that are also covariates.
