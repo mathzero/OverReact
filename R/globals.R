@@ -42,6 +42,5 @@ utils::globalVariables(c(
   "ub",
   "ub_adj",
   "value",
-  "vif",
-  "xtab_percentage_extractor"
+  "vif"
 ))

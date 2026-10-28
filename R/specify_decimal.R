@@ -9,7 +9,7 @@
 #' @return A character vector of formatted values when
 #'   \code{simpleround = FALSE}, or a rounded numeric vector when
 #'   \code{simpleround = TRUE}.
-specifyDecimal <- function(x,k, format = "fg", simpleround =F){
+specifyDecimal <- function(x,k, format = "fg", simpleround = FALSE){
   if (simpleround) {
     return(round(x, k))
   }

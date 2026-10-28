@@ -3,11 +3,8 @@ make_prevalence_test_data <- function(seed = 9, n = 2000) {
   data.frame(res = rbinom(n, 1, 0.05), sex = sample(c("F", "M"), n, TRUE))
 }
 
-# makeTablesNew() reports progress with print(), so capture it to keep test output clean.
-quietly <- function(code) {
-  utils::capture.output(out <- code)
-  out
-}
+# Silence the progress messages makeTablesNew() and stratifiedTables() report.
+quietly <- function(code) suppressMessages(code)
 
 test_that("makeTablesNew reports observed prevalence unless assay values are supplied", {
   dat <- make_prevalence_test_data()

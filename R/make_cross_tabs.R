@@ -50,9 +50,9 @@ comma_sep <- function(x) {
 
 # Simple cross-tab function, with %s
 crossTab <- function(dat, rowvar, colvar, rowvar_levels = NULL,
-                     colvar_levels = NULL, confint =T,include_percentages=T,
-                     rowwise_precentages = T, weights=NULL, comma_thousands = F,
-                     statistical_test = F){
+                     colvar_levels = NULL, confint =TRUE,include_percentages=TRUE,
+                     rowwise_precentages = TRUE, weights=NULL, comma_thousands = FALSE,
+                     statistical_test = FALSE){
 
   # weights
   if(is.null(weights)){
@@ -130,7 +130,7 @@ crossTab <- function(dat, rowvar, colvar, rowvar_levels = NULL,
 # Function to do x-tab for contiuous variables
 crossTabContinuous <- function(dat, rowvar, colvar=NULL, weights = NULL,
                                summary_stat="mean",
-                               statistical_test=F){
+                               statistical_test=FALSE){
 
   if(is.null(colvar)){
     colvar="dummy"
@@ -139,7 +139,7 @@ crossTabContinuous <- function(dat, rowvar, colvar=NULL, weights = NULL,
 
   if(tolower(summary_stat)=="mean"){
     if(!is.null(weights)){
-      means <- sapply(split(dat,as.factor(pull(dat,colvar))), function(x) stats::weighted.mean(pull(x, rowvar),pull(x, weights), na.rm=T)) %>%
+      means <- sapply(split(dat,as.factor(pull(dat,colvar))), function(x) stats::weighted.mean(pull(x, rowvar),pull(x, weights), na.rm=TRUE)) %>%
         as.table()%>% as.data.frame()
       groups <- split(dat, as.factor(pull(dat, colvar)))
       sds <- data.frame(
@@ -153,8 +153,8 @@ crossTabContinuous <- function(dat, rowvar, colvar=NULL, weights = NULL,
       sds$Freq <- round(sqrt(as.numeric(sds$Freq)),2)
     }
     else{
-      means <- (round(by(pull(dat, rowvar),pull(dat, colvar), mean, na.rm=T),2)) %>% as.table()%>% as.data.frame()
-      sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), sd, na.rm=T),2))%>% as.table()%>% as.data.frame()
+      means <- (round(by(pull(dat, rowvar),pull(dat, colvar), mean, na.rm=TRUE),2)) %>% as.table()%>% as.data.frame()
+      sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), sd, na.rm=TRUE),2))%>% as.table()%>% as.data.frame()
     }
     names(means) <- c("Category", "mean")
     names(sds) <- c("Category","sd")
@@ -171,11 +171,11 @@ crossTabContinuous <- function(dat, rowvar, colvar=NULL, weights = NULL,
                                                    sds[sds$Category == uniques[[x]],]$sd,")")
 
     }
-    tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=T),2), " (",round(sd(pull(dat, rowvar), na.rm=T),2),")")
+    tab$Sum = paste0(round(mean(pull(dat, rowvar), na.rm=TRUE),2), " (",round(sd(pull(dat, rowvar), na.rm=TRUE),2),")")
 
   }else if(tolower(summary_stat)=="median"){
-    means <- (round(by(pull(dat, rowvar),pull(dat, colvar), median, na.rm=T),2)) %>% as.table()%>% as.data.frame()
-    sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), IQR, na.rm=T),2))%>% as.table()%>% as.data.frame()
+    means <- (round(by(pull(dat, rowvar),pull(dat, colvar), median, na.rm=TRUE),2)) %>% as.table()%>% as.data.frame()
+    sds <- unlist(round(by(pull(dat, rowvar),pull(dat, colvar), IQR, na.rm=TRUE),2))%>% as.table()%>% as.data.frame()
     names(means) <- c("Category", "median")
     names(sds) <- c("Category","IQR")
     statname="Median (IQR)"
@@ -190,9 +190,8 @@ crossTabContinuous <- function(dat, rowvar, colvar=NULL, weights = NULL,
                                                    sds[sds$Category == uniques[[x]],]$IQR,")")
 
     }
-    tab$Sum = paste0(round(median(pull(dat, rowvar), na.rm=T),2), " (",round(IQR(pull(dat, rowvar), na.rm=T),2),")")
+    tab$Sum = paste0(round(median(pull(dat, rowvar), na.rm=TRUE),2), " (",round(IQR(pull(dat, rowvar), na.rm=TRUE),2),")")
   }else{
-    print("summary_stat not valid. Please choose from 'mean' or 'median'")
     stop("summary_stat not valid. Please choose from 'mean' or 'median'")
   }
 
@@ -211,14 +210,14 @@ crossTabContinuous <- function(dat, rowvar, colvar=NULL, weights = NULL,
 
 
 ### Generalise the xtab function to do multiple covariates at once
-crossTabMulti <- function(dat, rowvars, colvar=NULL, cov_names=NULL, confint=T,
-                          include_percentages = T,
-                          rowwise_precentages = T, weights = NULL,summary_stat="mean",
-                          comma_thousands = F, statistical_test = F,
+crossTabMulti <- function(dat, rowvars, colvar=NULL, cov_names=NULL, confint=TRUE,
+                          include_percentages = TRUE,
+                          rowwise_precentages = TRUE, weights = NULL,summary_stat="mean",
+                          comma_thousands = FALSE, statistical_test = FALSE,
                           rowvar_list){
 
   if(!summary_stat %in% c("mean","median")){
-    print("Please choose 'mean' or 'median' for summary_stat")
+    stop("Please choose 'mean' or 'median' for summary_stat")
   }
 
   if (!missing("rowvar_list")){
@@ -235,7 +234,7 @@ crossTabMulti <- function(dat, rowvars, colvar=NULL, cov_names=NULL, confint=T,
 
   res_list <- list()
   for (i in 1:length(rowvars)){
-    print(paste0("Processing ",rowvars[[i]]))
+    message("Processing ", rowvars[[i]])
     if(class(pull(dat, rowvars[[i]])) %in% c("integer", "numeric") &
        !all(names(table(pull(dat, rowvars[[i]]))) %in% c("0", "1"))){
       res <- crossTabContinuous(dat = dat,rowvar = rowvars[[i]], colvar = colvar,summary_stat=summary_stat,
@@ -273,7 +272,7 @@ crossTabMulti <- function(dat, rowvars, colvar=NULL, cov_names=NULL, confint=T,
 xtabPercentageExtractor <- function(mystring="teststrng",
                                     lookbehind = "\\(",
                                     lookahead= "\\%)",
-                                    return_numeric=T){
+                                    return_numeric=TRUE){
   full_lookbehind=paste0(".*",lookbehind)
   full_lookahead=paste0(lookahead,".*")
   x=gsub(full_lookbehind, "",mystring)
@@ -287,15 +286,15 @@ xtabPercentageExtractor <- function(mystring="teststrng",
 
 # define another dirty function to get a plottable df from an xtab
 makeXtabPlottable <- function(myxtab,
-                              pivot_for_plotting = T){
-  perc_cols=grepl("%",myxtab)
-  myxtab[,perc_cols]=lapply(X = myxtab[,perc_cols], FUN = xtab_percentage_extractor,
-                            lookbehind = "\\(",
-                            lookahead= "\\%",
-                            return_numeric=T)
+                              pivot_for_plotting = TRUE){
+  perc_cols <- vapply(myxtab, function(col) any(grepl("%", col)), logical(1))
+  myxtab[perc_cols] <- lapply(X = myxtab[perc_cols], FUN = xtabPercentageExtractor,
+                              lookbehind = "\\(",
+                              lookahead= "\\%",
+                              return_numeric=TRUE)
   if(pivot_for_plotting){
-    myxtab=tidyr::pivot_longer(data = myxtab,cols = c(1:ncol(myxtab))[perc_cols]) %>%
-      dplyr::select(Variable, name, value)
+    myxtab=tidyr::pivot_longer(data = myxtab, cols = dplyr::all_of(names(myxtab)[perc_cols])) %>%
+      dplyr::select(dplyr::any_of(c("Variable", "Category")), name, value)
   }
   return(myxtab)
 }

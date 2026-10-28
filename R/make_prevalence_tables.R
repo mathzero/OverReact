@@ -72,8 +72,8 @@ makeTablesNew <- function(dat,
   if(!is.null(cov_name_list)){
     if(!all(covariates %in% names(cov_name_list))){
       ind <- !covariates %in% names(cov_name_list)
-      print(paste0("These covariates are not supplied in your cov_name_list:",covariates[ind]))
-      print("Using simple variable name instead")
+      message("These covariates are not supplied in your cov_name_list: ", paste(covariates[ind], collapse = ", "))
+      message("Using simple variable name instead")
     }else{
       ind <- rep(F,length(covariates))
     }
@@ -99,7 +99,7 @@ makeTablesNew <- function(dat,
   # i <- 1
   for (i in 1:length(covariates)){
 
-    print(paste0("Now processing ", covariates[[i]]))
+    message("Now processing ", covariates[[i]])
     # generate table of result_var by covariate[i]
     covariate <- pull(dat, covariates[i])[keep]
     if(is.null(weights)){
@@ -207,7 +207,7 @@ stratifiedTables <- function(dat,
                              write_to_file = FALSE,
                              percent = TRUE,
                              output_list=TRUE,
-                             include_counts=F,
+                             include_counts=FALSE,
                              separator=","){
 
   if(inherits(dplyr::pull(dat, strat_var), "factor")){
@@ -222,7 +222,7 @@ stratifiedTables <- function(dat,
                            result_var = result_var, pos_val = pos_val, neg_val = neg_val,
                            covariates = covariates,
                            sens = sens,spec = spec, cov_name_list = cov_name_list,
-                           output_list = F, sf = sf, weights = weights, percent = percent,
+                           output_list = FALSE, sf = sf, weights = weights, percent = percent,
                            separator = separator)
     prevs$prev_concat <- paste0(prevs$Prevalence," (",prevs$Lower,separator, prevs$Upper,")")
     result_list[[i]] <- prevs
@@ -302,9 +302,9 @@ makeStratifiedPrevalenceTablePlottable <- function(tab){
   tab_pivot=tidyr::pivot_longer(data = tab, cols=pivot_cols)
   tab_pivot$prev <- as.numeric(gsub(" [(].*", "",tab_pivot$value))
   tab_pivot$lower <- xtabPercentageExtractor(mystring = tab_pivot$value,lookbehind = "[(]",
-                                             lookahead = "[,]",return_numeric = T)
+                                             lookahead = "[,]",return_numeric = TRUE)
   tab_pivot$upper <- xtabPercentageExtractor(mystring = tab_pivot$value,lookbehind = "[,]",
-                                             lookahead = "[)]",return_numeric = T)
+                                             lookahead = "[)]",return_numeric = TRUE)
   return(tab_pivot)
 }
 
@@ -355,11 +355,12 @@ orderMyTable <-  function(tab){
       out.list[[varr]] <-df_subset[order(match(mycats,fags)),]
     }else if(length(setdiff(levs,vapes))==0){
       out.list[[varr]] <-df_subset[order(match(mycats,vapes)),]
-    }else if(length(setdiff(levs,covid))==0){
+    }else if(length(setdiff(stringr::word(unique(df_subset$Category),-1),covid))==0){
+      # COVID categories are identified, and ordered, by their last word.
       out.list[[varr]] <-df_subset[order(match(stringr::word(df_subset$Category,-1),
                                                covid)),]
     }else if(length(setdiff(levs,adiposity))==0){
-      out.list[[varr]] <-df_subset[order(match(stringr::word(df_subset$Category,-1),
+      out.list[[varr]] <-df_subset[order(match(mycats,
                                                adiposity)),]
     }else{
       out.list[[varr]] <- df_subset

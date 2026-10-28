@@ -18,15 +18,15 @@ validate_factor_levels <- function(data, var_names) {
   issues <- list()
   for (var in var_names) {
     if (var %in% names(data) && is.factor(data[[var]])) {
-      # Drop unused levels and check if any levels have zero counts
-      data[[var]] <- droplevels(data[[var]])
+      # Report empty levels before dropping them; afterwards none can remain.
       level_counts <- table(data[[var]])
       if (any(level_counts == 0)) {
         issues[[var]] <- paste("Zero counts in levels:",
                                paste(names(level_counts)[level_counts == 0], collapse = ", "))
       }
+      data[[var]] <- droplevels(data[[var]])
       if (length(levels(data[[var]])) < 2) {
-        issues[[var]] <- "Factor has less than 2 levels after subsetting"
+        issues[[var]] <- c(issues[[var]], "Factor has less than 2 levels after subsetting")
       }
     }
   }

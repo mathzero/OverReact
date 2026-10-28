@@ -22,8 +22,8 @@ run_auto_tableone_regressions <- function(
     table_summary_stat = c("mean","median"),
     include_percentages = TRUE,
     statistical_test = TRUE,
-    includeNAsColvar = F,
-    includeNAsRowvar = F,
+    includeNAsColvar = FALSE,
+    includeNAsRowvar = FALSE,
     formatPvalsForEpiPaper = FALSE,
     addNobsTopRow = TRUE,
     # By default, treat outcome as categorical if factor/character/logical
@@ -74,8 +74,8 @@ run_auto_tableone_regressions <- function(
     if (p < 0.001) return(sprintf("<%.3f", 0.001))
     sprintf("%.4f", p)
   }
-  fmt_ci <- function(lo, hi, digits = 2) sprintf("(%.2f, %.2f)", round(lo, digits), round(hi, digits))
-  fmt_rd <- function(x, digits = 3) ifelse(is.na(x), "NA", sprintf("%.3f", x))
+  fmt_ci <- function(lo, hi, digits = 2) sprintf("(%.*f, %.*f)", digits, lo, digits, hi)
+  fmt_rd <- function(x, digits = 3) ifelse(is.na(x), "NA", sprintf("%.*f", digits, x))
   coalesce_chr <- function(x, y) ifelse(is.na(x) | x == "", y, x)
 
   # Determine outcome family & RD default

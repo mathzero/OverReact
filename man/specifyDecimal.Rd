@@ -4,7 +4,7 @@
 \alias{specifyDecimal}
 \title{Format numeric values with fixed decimals}
 \usage{
-specifyDecimal(x, k, format = "fg", simpleround = F)
+specifyDecimal(x, k, format = "fg", simpleround = FALSE)
 }
 \arguments{
 \item{x}{Numeric vector to format.}

@@ -297,8 +297,8 @@ See [the driver](R/automated_analysis.R).
 | --- | --- |
 | `plotReactForest()` | Create a forest plot from batch-model results, numeric plotting data, an `lm`/`glm`/`gam` fit, or a named list of fits. Supports `effect = "OR"`, `"Beta"` or `"RD"`, adjustment labels, reference rows and variable selection. |
 | `plotReactVIF()` | Plot externally supplied variance inflation factors by adjustment stage. Requires `Variable`, `adjustment` and `vif`; batch model wrappers do not currently return VIFs. |
-| `theme_react()` | Apply the REACT theme with white backgrounds, small text and configurable facet and title styling. |
-| `theme_mw()` | Apply a related theme with panel borders, ticks and configurable grids and legend placement. |
+| `theme_react()` | Apply the REACT theme with white backgrounds, small text and configurable base size, facet and title styling; further theme elements can be passed through `...`. |
+| `theme_mw()` | Apply a related theme with panel borders, ticks and configurable grids and legend placement; a numeric `legend.position` places the legend inside the panel. |
 | `imperial_cols()` | Retrieve named colours; with no arguments, return the complete named vector. |
 | `imperial_pal_discrete()` | Return a function generating discrete colours, retaining the specified palette and optionally extending it with distinct HCL colours. |
 | `imperial_pal_continuous()` | Return a palette interpolation function using CIELAB colour space. |
@@ -339,22 +339,22 @@ See [plots](R/plots.R), [themes](R/ggplot_themes.R) and
 
 | Function | Purpose and output |
 | --- | --- |
-| `reactCleaner()` | Dispatch binary, continuous or date cleaning. Binary recoding uses `negval`/`posval`; continuous cleaning replaces values below `floornumber`; date cleaning returns formatted character strings. |
+| `reactCleaner()` | Dispatch binary, continuous or date cleaning; other `datatype` values raise an error. Binary recoding uses `negval`/`posval`; continuous cleaning replaces values below `floornumber`; date cleaning returns formatted character strings. |
 | `binaryCleaner()` | Recode 1 → 1 and 2 → 0; other values become missing. |
 | `binaryCleaner_1_0()` | Retain 0/1 values and replace other values with missing. |
 | `continuousCleaner()` | Replace values below `floornumber` (default 1) with missing. |
 | `dateCleaner()` | Parse dates using `dateFormat`, treating `"#NULL!"`, `"-66"` and `"-99"` as missing. Returns a `Date` vector. |
 | `canBeNumeric()` | Test whether numeric conversion introduces additional missing values; return a logical scalar. |
-| `checkConvertNumeric()` | Convert every eligible data-frame column to numeric; return a data frame. Numeric-looking categorical codes also qualify. |
+| `checkConvertNumeric()` | Convert every eligible column to numeric, keeping column names. A column converts only if no new missing values appear and distinct values stay distinct, so codes such as `"01"` and `"1"` are left unchanged. Numeric-looking factor codes otherwise qualify. |
 | `calculateEpiStats()` | Calculate sensitivity, specificity, positive predictive value and negative predictive value from binary 0/1 prediction and outcome vectors. `returnAllStats = TRUE` adds sample and confusion-matrix counts. |
-| `pValEpiConverter()` | Convert p-values to threshold labels with three or four significance-asterisk levels. |
-| `pvalAsterisker()` | Return significance asterisks, optionally including rounded p-values and non-significance labels. |
+| `pValEpiConverter()` | Convert p-values to threshold labels with three or four significance-asterisk levels; missing p-values stay missing. |
+| `pvalAsterisker()` | Return significance asterisks, optionally including rounded p-values (in fixed notation, such as `<0.0001`) and non-significance labels; missing p-values stay missing. |
 | `specifyDecimal()` | Format numbers using `formatC()` and `k` digits; `format = "f"` fixes decimal places, whereas the default `"fg"` uses significant-digit formatting. `simpleround = TRUE` returns rounded numbers. |
 | `comma_sep()` | Format numbers with comma thousands separators and integer precision. |
 
-Clean missing-value codes before calculating diagnostic accuracy: the count
-calculations omit missing products, while the optional sample counts are not
-restricted to complete prediction–outcome pairs. Formatting functions change
+Clean missing-value codes before calculating diagnostic accuracy;
+`calculateEpiStats()` uses complete prediction–outcome pairs for every count.
+Formatting functions change
 presentation only; asterisks do not implement a multiple-testing correction.
 See [cleaning](R/cleaner_functions.R), [epidemiological utilities](R/epi_functions.R)
 and [numeric formatting](R/specify_decimal.R).
@@ -372,7 +372,8 @@ and [numeric formatting](R/specify_decimal.R).
 results_dir <- file.path(tempdir(), "overreact-example")
 dir.create(results_dir, showWarnings = FALSE, recursive = TRUE)
 
-# Table and workbook functions concatenate paths; include the final separator.
+# Paths are concatenated, so outpath may end in a filename prefix; an existing
+# directory also works without the final separator.
 outpath <- paste0(results_dir, .Platform$file.sep)
 saveREACTtable(table_one, outpath = outpath, filename = "table_one", save_rds = TRUE)
 savePrettyExcelWorkbook(
@@ -384,8 +385,9 @@ saveREACTplot(forest, figpath = results_dir, filename = "forest",
               width = 8, height = 5, savePDF = FALSE)
 ```
 
-Create output directories before export. Workbook sheet names are truncated to
-30 characters; supply distinct names. See [export functions](R/save_functions.R).
+Create output directories before export. Matrices and two-way tables are
+written with their layout and row labels. Workbook sheet names are truncated to 30
+characters, characters Excel forbids are replaced, and duplicates are numbered. See [export functions](R/save_functions.R).
 
 ## Legacy interfaces
 
@@ -398,9 +400,9 @@ the current descriptive and modelling interfaces.
 | `crossTabContinuous()` | Group-specific mean (SD) or median (IQR), pooled summaries and optional ANOVA. Weights affect group means and SDs only; pooled summaries and medians remain unweighted. |
 | `crossTabMulti()` | Combine legacy categorical and continuous cross-tabs into `Variable`/`Category` rows with a `Pooled` column. `rowvar_list` is deprecated in favour of `rowvars`; continuous weights are not forwarded. |
 | `xtabPercentageExtractor()` | Extract text or numeric values between configurable regular-expression delimiters, commonly percentages or interval bounds. |
-| `makeXtabPlottable()` | Intended to extract percentages and optionally pivot a cross-tab to long format. The current implementation references the undefined helper `xtab_percentage_extractor` and requires repair before use. |
+| `makeXtabPlottable()` | Extract the percentages from a legacy cross-tab and optionally pivot it to long `Variable`, `Category`, `name`, `value` format for plotting. |
 | `GAMModelMaker()` | Legacy sequential binomial GAM wrapper; `spline_vars` indexes the adjusters entered as smooth terms. Returns formatted `model_df` columns per stage and the coefficient tables. |
-| `naReporter()` | Intended to audit REACT missing codes (`-91`, `-92`, `-77`, `-99`) and ordinary missingness. The current implementation constructs a report but returns `NULL`. |
+| `naReporter()` | Count REACT missing codes (`-91`, `-92`, `-77`, `-99`) and ordinary missing values; returns one row per variable. |
 
 See [legacy cross-tabs](R/make_cross_tabs.R) and
 [legacy modelling code](R/make_OR_tables.R).

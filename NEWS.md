@@ -36,6 +36,22 @@
 * Checkpoint files are written atomically without using the session RNG.
 * Weighted `crossTabContinuous()` no longer errors when the grouping variable
   has missing values.
+* `pvalAsterisker()` and `pValEpiConverter()` keep missing p-values missing
+  (they were labelled "ns") and print small thresholds as `<0.0001`.
+* `theme_react()` and `theme_mw()` honour `base_size`, `strip_text_margin` and
+  `...`, and no longer warn about strip margins.
+* `saveREACT()` and `saveREACTtable()` write matrices and tables;
+  `savePrettyExcelWorkbook()` checks its input, accepts a single data frame and
+  makes sheet names valid and unique; a directory `outpath` no longer needs a
+  trailing separator.
+* `dateCleaner()` and `reactCleaner()` handle factor and Date input, and an
+  invalid `datatype` is an error.
+* `checkConvertNumeric()` keeps column names and leaves codes such as "01"/"1"
+  unconverted.
+* `orderMyTable()` orders weight and COVID categories correctly;
+  `validate_factor_levels()` reports empty levels.
+* `makeXtabPlottable()` and `naReporter()` work; `calculateEpiStats()` uses
+  complete pairs; report RD intervals use the requested precision.
 
 ## Packaging
 

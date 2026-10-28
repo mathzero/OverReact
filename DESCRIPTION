@@ -20,7 +20,7 @@ Suggests:
 Imports:
     dplyr,
     ggforce,
-    ggplot2,
+    ggplot2 (>= 3.5.0),
     grDevices,
     MASS,
     methods,
