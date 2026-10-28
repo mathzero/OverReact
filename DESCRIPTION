@@ -16,6 +16,8 @@ Depends:
     R (>= 4.1.0)
 Suggests:
     data.table,
+    nnet,
+    sandwich,
     testthat (>= 3.0.0)
 Imports:
     dplyr,

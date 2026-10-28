@@ -69,6 +69,7 @@ makeORTable <- function(mod, ref_level = NULL, dp = 3) {
       is_reference = NA,
       is_intercept = NA,
       model_family = NA_character_,
+      measure = NA_character_,
       stringsAsFactors = FALSE
     ))
   }
@@ -77,34 +78,38 @@ makeORTable <- function(mod, ref_level = NULL, dp = 3) {
 }
 
 # =============================================================================
-# 4. Risk-difference table builder --------------------------------------------
+# 4. Marginal risk-difference and risk-ratio table builders --------------------
 # =============================================================================
-# Marginal (standardised) risk contrasts by g-computation over the analysis sample.
-# Factor exposures: mean risk with every row set to each level, minus mean risk with
-# every row set to the reference level. Numeric exposures: the average marginal effect,
-# i.e. the mean derivative of risk per one-unit increase, taken by central finite
-# difference so that splines and interactions are handled too. Intervals use the delta
-# method by default; ci_method = "simulation" uses n_sim multivariate-normal coefficient
-# draws instead. dp = NULL returns unrounded estimates.
-makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
-                        data = NULL, n_sim = 100, seed = 1,
-                        ci_method = c("delta", "simulation")) {
+# Marginal (standardised) contrasts by g-computation over the analysis sample, for
+# binomial and (modified) Poisson GLMs of a binary outcome. Factor exposures compare the
+# mean risk with every row set to each level against every row set to the reference
+# level, as a difference (RD) or a ratio (RR). Numeric exposures give the effect of a
+# one-unit increase: the average marginal effect for RD, and exp(d log(mean risk) / dx)
+# for RR, both by central finite difference so that splines and interactions are handled
+# too. Intervals use the delta method (on the log scale for RR) by default;
+# ci_method = "simulation" uses n_sim multivariate-normal coefficient draws instead.
+# dp = NULL returns unrounded estimates.
+.react_marginal_table <- function(mod, variable_name, measure = c("RD", "RR"), ref_level = NULL,
+                                  dp = 4, data = NULL, n_sim = 100, seed = 1,
+                                  ci_method = c("delta", "simulation")) {
+  measure <- match.arg(measure)
   ci_method <- match.arg(ci_method)
-  na_tbl <- data.frame(Level = NA_character_, RD = NA_real_, Lower = NA_real_,
-                       Upper = NA_real_, P_value = NA_real_,
-                       stringsAsFactors = FALSE)
+  na_tbl <- stats::setNames(
+    data.frame(NA_character_, NA_real_, NA_real_, NA_real_, NA_real_, stringsAsFactors = FALSE),
+    c("Level", measure, "Lower", "Upper", "P_value")
+  )
   if (is.null(mod) || inherits(mod, "try-error")) return(na_tbl)
-  fam_is_binom <- tryCatch(mod$family$family == "binomial",
-                           error = function(e) FALSE)
-  if (!isTRUE(fam_is_binom)) return(na_tbl)
+  family_ok <- tryCatch(mod$family$family %in% c("binomial", "poisson"),
+                        error = function(e) FALSE)
+  if (!isTRUE(family_ok)) return(na_tbl)
   if (is.null(data)) data <- model.frame(mod)
   if (!variable_name %in% names(data)) return(na_tbl)
 
-  # Check for valid coefficients and vcov matrix before proceeding
+  # Check for valid coefficients and vcov matrix (robust, if the fit has one)
   beta_hat <- coef(mod)
-  vcov_mat <- tryCatch(vcov(mod), error = function(e) NULL)
+  vcov_mat <- tryCatch(.react_vcov(mod), error = function(e) NULL)
   if (is.null(vcov_mat) || anyNA(vcov_mat) || anyNA(beta_hat)) {
-    warning("Invalid variance-covariance matrix for RD calculation")
+    warning("Invalid variance-covariance matrix for ", measure, " calculation")
     return(na_tbl)
   }
 
@@ -133,26 +138,38 @@ makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
     if (is.null(beta_sim)) return(na_tbl)
   }
 
-  # Difference in mean risk between two counterfactual design matrices, per `scale` units.
+  # Contrast of mean risk between two counterfactual design matrices, per `scale` units:
+  # a difference for RD, a difference of logs (exponentiated at the end) for RR.
+  contrast <- function(risk1, risk0) if (measure == "RD") risk1 - risk0 else log(risk1) - log(risk0)
   contrast_row <- function(level, X1, X0, scale = 1) {
     eta1 <- drop(X1 %*% beta_hat)
     eta0 <- drop(X0 %*% beta_hat)
-    rd_hat <- mean(linkinv(eta1) - linkinv(eta0)) / scale
+    risk1 <- mean(linkinv(eta1))
+    risk0 <- mean(linkinv(eta0))
+    est <- contrast(risk1, risk0) / scale
     if (is.null(beta_sim)) {
-      grad <- (colMeans(mu_eta(eta1) * X1) - colMeans(mu_eta(eta0) * X0)) / scale
-      se_rd <- sqrt(drop(crossprod(grad, vcov_mat %*% grad)))
-      ci <- rd_hat + c(-1, 1) * qnorm(0.975) * se_rd
+      grad1 <- colMeans(mu_eta(eta1) * X1)
+      grad0 <- colMeans(mu_eta(eta0) * X0)
+      grad <- if (measure == "RD") grad1 - grad0 else grad1 / risk1 - grad0 / risk0
+      se <- sqrt(drop(crossprod(grad / scale, vcov_mat %*% (grad / scale))))
+      ci <- est + c(-1, 1) * qnorm(0.975) * se
     } else {
-      rd_sim <- (colMeans(linkinv(X1 %*% t(beta_sim))) -
-                   colMeans(linkinv(X0 %*% t(beta_sim)))) / scale
-      ci <- quantile(rd_sim, c(.025, .975), na.rm = TRUE, names = FALSE)
-      se_rd <- sd(rd_sim, na.rm = TRUE)
+      sims <- contrast(colMeans(linkinv(X1 %*% t(beta_sim))),
+                       colMeans(linkinv(X0 %*% t(beta_sim)))) / scale
+      ci <- quantile(sims, c(.025, .975), na.rm = TRUE, names = FALSE)
+      se <- sd(sims, na.rm = TRUE)
     }
-    out <- data.frame(Level = level, RD = rd_hat, Lower = ci[1], Upper = ci[2],
-                      P_value = 2 * pnorm(-abs(rd_hat / se_rd)),
-                      stringsAsFactors = FALSE)
+    p_value <- 2 * pnorm(-abs(est / se))
+    if (measure == "RR") {
+      est <- exp(est)
+      ci <- exp(ci)
+    }
+    out <- stats::setNames(
+      data.frame(level, est, ci[1], ci[2], p_value, stringsAsFactors = FALSE),
+      c("Level", measure, "Lower", "Upper", "P_value")
+    )
     if (!is.null(dp)) {
-      out[c("RD", "Lower", "Upper")] <- lapply(out[c("RD", "Lower", "Upper")], round, dp)
+      out[c(measure, "Lower", "Upper")] <- lapply(out[c(measure, "Lower", "Upper")], round, dp)
     }
     out
   }
@@ -175,7 +192,7 @@ makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
     if (!length(out)) return(na_tbl)
     return(do.call(rbind, out))
   }
-  # 2) numeric exposure: average marginal effect per one-unit increase ----------
+  # 2) numeric exposure: effect of a one-unit increase -------------------------
   if (is.numeric(exposure)) {
     h <- 1e-4 * sd(exposure)
     if (!is.finite(h) || h <= 0) h <- 1e-4
@@ -190,20 +207,22 @@ makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
   na_tbl
 }
 
-## ===========================================================================
-##  Revised wrapper functions to separate OR and RD outputs
-##  ---------------------------------------------------------------------------
-##  - modelMakerSequentialRD(): now returns separate OR and RD tables & plots
-##  - ModelMakerMultiRD():      now collates and returns four outputs:
-##       * df_output          (OR summary tables)
-##       * plot_output        (OR plotting tables)
-##       * df_output_RDs      (Risk-difference summary tables)
-##       * plot_output_RDs    (Risk-difference plotting tables)
-##  All other behaviour and arguments are unchanged.
-## ===========================================================================
+makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
+                        data = NULL, n_sim = 100, seed = 1,
+                        ci_method = c("delta", "simulation")) {
+  .react_marginal_table(mod, variable_name, measure = "RD", ref_level = ref_level, dp = dp,
+                        data = data, n_sim = n_sim, seed = seed, ci_method = match.arg(ci_method))
+}
+
+makeRRTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
+                        data = NULL, n_sim = 100, seed = 1,
+                        ci_method = c("delta", "simulation")) {
+  .react_marginal_table(mod, variable_name, measure = "RR", ref_level = ref_level, dp = dp,
+                        data = data, n_sim = n_sim, seed = seed, ci_method = match.arg(ci_method))
+}
 
 # ---------------------------------------------------------------------------
-# 5. modelMakerSequentialRD() - SEPARATE OR / RD OUTPUTS
+# 5. modelMakerSequentialRD() - SEPARATE OR / RD / RR OUTPUTS
 # ---------------------------------------------------------------------------
 modelMakerSequentialRD <- function(variable_name,
                                    data,
@@ -218,7 +237,10 @@ modelMakerSequentialRD <- function(variable_name,
                                    n_sim                   = 100,
                                    glm_control             = glm.control(maxit = 50),
                                    sample_strategy         = c("common_per_predictor", "per_model"),
-                                   rd_ci_method            = c("delta", "simulation")) {
+                                   rd_ci_method            = c("delta", "simulation"),
+                                   include_rr              = FALSE,
+                                   family                  = "auto",
+                                   offset                  = NULL) {
   sample_strategy <- match.arg(sample_strategy)
   rd_ci_method <- match.arg(rd_ci_method)
 
@@ -246,7 +268,10 @@ modelMakerSequentialRD <- function(variable_name,
     n_sim = n_sim,
     glm_control = glm_control,
     sample_strategy = sample_strategy,
-    rd_ci_method = rd_ci_method
+    rd_ci_method = rd_ci_method,
+    include_rr = include_rr,
+    family = family,
+    offset = offset
   )
 
   rename_cols <- function(df, suffix) {
@@ -261,11 +286,9 @@ modelMakerSequentialRD <- function(variable_name,
 
   out$model_df_ORs <- rename_cols(out$model_df_ORs, "_OR")
   out$model_df_RDs <- rename_cols(out$model_df_RDs, "_RD")
+  out$model_df_RRs <- rename_cols(out$model_df_RRs, "_RR")
   out
 }
-
-
-
 
 
 # Non INcremental workers -------------------------------------------------
@@ -273,15 +296,19 @@ modelMakerSequentialRD <- function(variable_name,
 # Helpers (new/updated)
 # =========================
 
-# Always returns a [reference] row for categorical exposures in RD output
-safe_makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
-                             data = NULL, n_sim = 100, seed = 1,
-                             ci_method = c("delta", "simulation")) {
-  ci_method <- match.arg(ci_method)
+# Marginal table with a [reference] row for categorical exposures; NULL (with a message)
+# if the calculation fails.
+.react_safe_marginal_table <- function(mod, variable_name, measure = "RD", ref_level = NULL,
+                                       dp = 4, data = NULL, n_sim = 100, seed = 1,
+                                       ci_method = "delta") {
   out <- tryCatch(
-    makeRDTable(mod = mod, variable_name = variable_name, ref_level = ref_level,
-                dp = dp, data = data, n_sim = n_sim, seed = seed, ci_method = ci_method),
-    error = function(e) { message("Risk-difference table failed: ", e$message); NULL }
+    .react_marginal_table(mod = mod, variable_name = variable_name, measure = measure,
+                          ref_level = ref_level, dp = dp, data = data, n_sim = n_sim,
+                          seed = seed, ci_method = ci_method),
+    error = function(e) {
+      message(if (measure == "RD") "Risk-difference" else "Risk-ratio", " table failed: ", e$message)
+      NULL
+    }
   )
   if (is.null(out)) return(NULL)
 
@@ -289,14 +316,23 @@ safe_makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
   lvls <- tryCatch(mod$xlevels[[variable_name]], error = function(e) NULL)
   if (!is.null(lvls)) {
     if (is.null(ref_level) || !(ref_level %in% lvls)) ref_level <- lvls[1]
-    ref_lbl <- paste0(ref_level, " [reference]")
     if (!any(grepl("\\[reference\\]$", out$Level))) {
-      ref_row <- data.frame(Level = ref_lbl, RD = NA_real_, Lower = NA_real_,
-                            Upper = NA_real_, P_value = NA_real_, stringsAsFactors = FALSE)
+      ref_row <- out[1, , drop = FALSE]
+      ref_row$Level <- paste0(ref_level, " [reference]")
+      ref_row[c(measure, "Lower", "Upper", "P_value")] <- NA_real_
       out <- rbind(ref_row, out)
     }
   }
   out
+}
+
+# Always returns a [reference] row for categorical exposures in RD output
+safe_makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
+                             data = NULL, n_sim = 100, seed = 1,
+                             ci_method = c("delta", "simulation")) {
+  .react_safe_marginal_table(mod, variable_name, measure = "RD", ref_level = ref_level, dp = dp,
+                             data = data, n_sim = n_sim, seed = seed,
+                             ci_method = match.arg(ci_method))
 }
 
 # Build cumulative adjustment sets from a vector of variables:
@@ -329,11 +365,11 @@ compute_level_order <- function(x, ref_level = NULL) {
 # Helpers for robust parallel with restart
 # ---------------------------------------------------------------------
 
-.collect_completed <- function(vars, savepath_runs, include_rd, spec_hashes = NULL) {
+.collect_completed <- function(vars, savepath_runs, tables, spec_hashes = NULL) {
   out <- list()
   if (is.null(savepath_runs) || !length(vars)) return(out)
   for (v in vars) {
-    fmap <- .var_filemap(savepath_runs, .sanitize_var_id(v), include_rd = include_rd)
+    fmap <- .var_filemap(savepath_runs, .sanitize_var_id(v), tables = tables)
     if (.has_complete_outputs(fmap, spec_hash = spec_hashes[[v]])) out[[v]] <- .load_var_outputs(fmap)
   }
   out
@@ -342,7 +378,7 @@ compute_level_order <- function(x, ref_level = NULL) {
 .run_todo_with_restarts <- function(todo_vars,
                                     single_var_runner,
                                     savepath_runs,
-                                    include_rd,
+                                    tables,
                                     ncores,
                                     parallel_restarts = 2,
                                     shrink_workers_on_retry = TRUE,
@@ -423,7 +459,7 @@ compute_level_order <- function(x, ref_level = NULL) {
     }
 
     # Harvest any completions from disk and shrink the todo set
-    newly <- .collect_completed(remaining, savepath_runs, include_rd, spec_hashes)
+    newly <- .collect_completed(remaining, savepath_runs, tables, spec_hashes)
     if (length(newly)) {
       message("Recovered completed variables from disk: ", paste(names(newly), collapse = ", "))
       for (nm in names(newly)) computed[[nm]] <- newly[[nm]]
@@ -494,41 +530,47 @@ compute_level_order <- function(x, ref_level = NULL) {
   tryCatch(readRDS(path), error = function(e) NULL)
 }
 
-.coerce_df_types <- function(df, kind = c("df_or","plot_or","df_rd","plot_rd","diagnostics")) {
+.coerce_df_types <- function(df, kind = c("df_or","plot_or","df_rd","plot_rd","df_rr","plot_rr","diagnostics")) {
   kind <- match.arg(kind)
   if (!nrow(df)) return(df)
-  to_char <- intersect(c("Level","Category","term_raw","model","model_family","adjustment_label","stage","adjusted_vars","status","error_msg","warnings","separation_msg"), names(df))
+  to_char <- intersect(c("Level","Category","term_raw","model","model_family","measure","outcome_level","adjustment_label","stage","adjusted_vars","status","error_msg","warnings","separation_msg"), names(df))
   for (nm in to_char) df[[nm]] <- as.character(df[[nm]])
-  if (kind %in% c("plot_or","plot_rd")) {
+  if (startsWith(kind, "plot_")) {
     if ("adjustment" %in% names(df)) df$adjustment <- suppressWarnings(as.integer(df$adjustment))
-    num_cols <- if (kind == "plot_or") c("OR","Lower","Upper","P_value") else c("RD","Lower","Upper","P_value")
+    num_cols <- c(toupper(sub("^plot_", "", kind)), "Lower", "Upper", "P_value", "Q_value")
     for (nm in intersect(num_cols, names(df))) df[[nm]] <- suppressWarnings(as.numeric(df[[nm]]))
-  } else if (kind %in% c("df_or","df_rd")) {
+  } else if (startsWith(kind, "df_")) {
     if ("Nobs_in_model" %in% names(df)) df$Nobs_in_model <- suppressWarnings(as.integer(df$Nobs_in_model))
   } else if (kind == "diagnostics") {
-    int_cols <- intersect(c("nobs","rd_rows","attempt"), names(df))
+    int_cols <- intersect(c("nobs","rd_rows","rr_rows","attempt"), names(df))
     for (nm in int_cols) df[[nm]] <- suppressWarnings(as.integer(df[[nm]]))
     if ("vcov_ok" %in% names(df)) df$vcov_ok <- as.logical(df$vcov_ok)
   }
   df
 }
 
-.var_filemap <- function(savepath_runs, var_id, include_rd = TRUE) {
+# Per-predictor checkpoint files: df_<table> and plot_<table> outputs, as RDS and CSV, for
+# each table ("or" for coefficients, "rd" and "rr" for marginal effects), plus the
+# diagnostics and the specification fingerprint.
+.var_filemap <- function(savepath_runs, var_id, tables = c("or", "rd")) {
   var_dir  <- file.path(savepath_runs, var_id)
-  list(
-    dir          = var_dir,
-    df_or_csv    = file.path(var_dir, "df_or.csv"),
-    plot_or_csv  = file.path(var_dir, "plot_or.csv"),
-    df_rd_csv    = if (isTRUE(include_rd)) file.path(var_dir, "df_rd.csv") else NULL,
-    plot_rd_csv  = if (isTRUE(include_rd)) file.path(var_dir, "plot_rd.csv") else NULL,
-    diag_csv     = file.path(var_dir, "diagnostics.csv"),
-    df_or_rds    = file.path(var_dir, "df_or.rds"),
-    plot_or_rds  = file.path(var_dir, "plot_or.rds"),
-    df_rd_rds    = if (isTRUE(include_rd)) file.path(var_dir, "df_rd.rds") else NULL,
-    plot_rd_rds  = if (isTRUE(include_rd)) file.path(var_dir, "plot_rd.rds") else NULL,
-    diag_rds     = file.path(var_dir, "diagnostics.rds"),
-    spec_rds     = file.path(var_dir, "spec.rds")
+  files <- list(
+    dir      = var_dir,
+    tables   = tables,
+    diag_csv = file.path(var_dir, "diagnostics.csv"),
+    diag_rds = file.path(var_dir, "diagnostics.rds"),
+    spec_rds = file.path(var_dir, "spec.rds")
   )
+  for (tab in tables) for (kind in c("df", "plot")) for (ext in c("csv", "rds")) {
+    files[[paste0(kind, "_", tab, "_", ext)]] <- file.path(var_dir, paste0(kind, "_", tab, ".", ext))
+  }
+  files
+}
+
+.var_table_files <- function(filemap, ext) {
+  keys <- paste0(rep(c("df_", "plot_"), times = length(filemap$tables)),
+                 rep(filemap$tables, each = 2L), "_", ext)
+  unlist(filemap[keys], use.names = FALSE)
 }
 
 # With spec_hash, outputs only count as complete if they were saved for the same model
@@ -537,18 +579,10 @@ compute_level_order <- function(x, ref_level = NULL) {
   if (!is.null(spec_hash) && !identical(.robust_read_rds(filemap$spec_rds), spec_hash)) {
     return(FALSE)
   }
-  req <- c(filemap$df_or_rds, filemap$plot_or_rds, filemap$df_rd_rds, filemap$plot_rd_rds)
-  req <- req[!sapply(req, is.null)]
-  if (length(req) && all(file.exists(req))) {
-    sizes <- file.info(req)$size
-    return(all(is.finite(sizes) & !is.na(sizes) & sizes > 0))
+  complete <- function(paths) {
+    length(paths) > 0L && all(file.exists(paths)) && all(file.info(paths)$size > 0)
   }
-  req_csv <- c(filemap$df_or_csv, filemap$plot_or_csv, filemap$df_rd_csv, filemap$plot_rd_csv)
-  req_csv <- req_csv[!sapply(req_csv, is.null)]
-  if (!length(req_csv)) return(FALSE)
-  if (!all(file.exists(req_csv))) return(FALSE)
-  sizes <- file.info(req_csv)$size
-  all(is.finite(sizes) & !is.na(sizes) & sizes > 0)
+  complete(.var_table_files(filemap, "rds")) || complete(.var_table_files(filemap, "csv"))
 }
 
 .save_var_outputs <- function(filemap, out, diagnostics = NULL, write_csv = TRUE,
@@ -556,55 +590,48 @@ compute_level_order <- function(x, ref_level = NULL) {
   .safe_dir_create(filemap$dir)
   # The spec file is written last, so an interrupted save never looks complete.
   if (file.exists(filemap$spec_rds)) unlink(filemap$spec_rds)
-  .atomic_write_rds(out$tidy_res_or,  filemap$df_or_rds)
-  .atomic_write_rds(out$tidy_plot_or, filemap$plot_or_rds)
-  if (!is.null(filemap$df_rd_rds))  .atomic_write_rds(out$tidy_res_rd,  filemap$df_rd_rds)
-  if (!is.null(filemap$plot_rd_rds)) .atomic_write_rds(out$tidy_plot_rd, filemap$plot_rd_rds)
-  if (!is.null(diagnostics)) .atomic_write_rds(diagnostics, filemap$diag_rds)
-
-  if (isTRUE(write_csv)) {
-    if (!is.null(out$tidy_res_or)  && nrow(out$tidy_res_or))  .atomic_write_csv(out$tidy_res_or,  filemap$df_or_csv)
-    if (!is.null(out$tidy_plot_or) && nrow(out$tidy_plot_or)) .atomic_write_csv(out$tidy_plot_or, filemap$plot_or_csv)
-    if (!is.null(filemap$df_rd_csv)   && !is.null(out$tidy_res_rd)  && nrow(out$tidy_res_rd))  .atomic_write_csv(out$tidy_res_rd,  filemap$df_rd_csv)
-    if (!is.null(filemap$plot_rd_csv) && !is.null(out$tidy_plot_rd) && nrow(out$tidy_plot_rd)) .atomic_write_csv(out$tidy_plot_rd, filemap$plot_rd_csv)
-    if (!is.null(diagnostics) && nrow(diagnostics)) .atomic_write_csv(diagnostics, filemap$diag_csv)
+  for (tab in filemap$tables) {
+    for (kind in c("df", "plot")) {
+      obj <- out[[paste0(if (kind == "df") "tidy_res_" else "tidy_plot_", tab)]]
+      .atomic_write_rds(obj, filemap[[paste0(kind, "_", tab, "_rds")]])
+      if (isTRUE(write_csv) && !is.null(obj) && nrow(obj)) {
+        .atomic_write_csv(obj, filemap[[paste0(kind, "_", tab, "_csv")]])
+      }
+    }
+  }
+  if (!is.null(diagnostics)) {
+    .atomic_write_rds(diagnostics, filemap$diag_rds)
+    if (isTRUE(write_csv) && nrow(diagnostics)) .atomic_write_csv(diagnostics, filemap$diag_csv)
   }
   if (!is.null(spec_hash)) .atomic_write_rds(spec_hash, filemap$spec_rds)
   invisible(TRUE)
 }
 
 .load_var_outputs <- function(filemap) {
-  df_or   <- .robust_read_rds(filemap$df_or_rds)
-  plot_or <- .robust_read_rds(filemap$plot_or_rds)
-  df_rd   <- if (!is.null(filemap$df_rd_rds))  .robust_read_rds(filemap$df_rd_rds)  else NULL
-  plot_rd <- if (!is.null(filemap$plot_rd_rds)) .robust_read_rds(filemap$plot_rd_rds) else NULL
+  keys <- paste0(rep(c("df_", "plot_"), times = length(filemap$tables)),
+                 rep(filemap$tables, each = 2L))
+  tables <- lapply(keys, function(key) .robust_read_rds(filemap[[paste0(key, "_rds")]]))
+  names(tables) <- keys
   diag_df <- .robust_read_rds(filemap$diag_rds)
 
-  using_rds <- !is.null(df_or) && !is.null(plot_or) &&
-    (is.null(filemap$df_rd_rds)  || !is.null(df_rd)) &&
-    (is.null(filemap$plot_rd_rds) || !is.null(plot_rd))
-
-  if (!using_rds) {
-    df_or   <- .coerce_df_types(.robust_read_csv(filemap$df_or_csv),   "df_or")
-    plot_or <- .coerce_df_types(.robust_read_csv(filemap$plot_or_csv), "plot_or")
-    if (!is.null(filemap$df_rd_csv))   df_rd   <- .coerce_df_types(.robust_read_csv(filemap$df_rd_csv),   "df_rd")   else df_rd <- data.frame()
-    if (!is.null(filemap$plot_rd_csv)) plot_rd <- .coerce_df_types(.robust_read_csv(filemap$plot_rd_csv), "plot_rd") else plot_rd <- data.frame()
+  # Fall back to the CSV copies, and cache them as RDS.
+  if (any(vapply(tables, is.null, logical(1)))) {
+    tables <- lapply(keys, function(key) .coerce_df_types(.robust_read_csv(filemap[[paste0(key, "_csv")]]), key))
+    names(tables) <- keys
     diag_df <- .coerce_df_types(.robust_read_csv(filemap$diag_csv), "diagnostics")
     .safe_dir_create(filemap$dir)
-    .atomic_write_rds(df_or,   filemap$df_or_rds)
-    .atomic_write_rds(plot_or, filemap$plot_or_rds)
-    if (!is.null(filemap$df_rd_rds))   .atomic_write_rds(df_rd,   filemap$df_rd_rds)
-    if (!is.null(filemap$plot_rd_rds)) .atomic_write_rds(plot_rd, filemap$plot_rd_rds)
+    for (key in keys) .atomic_write_rds(tables[[key]], filemap[[paste0(key, "_rds")]])
     if (!is.null(diag_df) && nrow(diag_df)) .atomic_write_rds(diag_df, filemap$diag_rds)
   }
 
-  list(
-    tidy_res_or  = as.data.frame(df_or,   stringsAsFactors = FALSE),
-    tidy_plot_or = as.data.frame(plot_or, stringsAsFactors = FALSE),
-    tidy_res_rd  = as.data.frame(if (is.null(df_rd))  data.frame() else df_rd,   stringsAsFactors = FALSE),
-    tidy_plot_rd = as.data.frame(if (is.null(plot_rd)) data.frame() else plot_rd, stringsAsFactors = FALSE),
-    diagnostics  = as.data.frame(if (is.null(diag_df)) data.frame() else diag_df, stringsAsFactors = FALSE)
-  )
+  as_df <- function(x) as.data.frame(if (is.null(x)) data.frame() else x, stringsAsFactors = FALSE)
+  out <- list()
+  for (tab in filemap$tables) {
+    out[[paste0("tidy_res_", tab)]] <- as_df(tables[[paste0("df_", tab)]])
+    out[[paste0("tidy_plot_", tab)]] <- as_df(tables[[paste0("plot_", tab)]])
+  }
+  out$diagnostics <- as_df(diag_df)
+  out
 }
 
 # =============================================================================
@@ -627,7 +654,10 @@ modelMakerAdjustedSetsRD <- function(variable_name,
                                      n_sim                   = 100,
                                      glm_control             = glm.control(maxit = 50),
                                      sample_strategy         = c("common_per_predictor", "per_model"),
-                                     rd_ci_method            = c("delta", "simulation")) {
+                                     rd_ci_method            = c("delta", "simulation"),
+                                     include_rr              = FALSE,
+                                     family                  = "auto",
+                                     offset                  = NULL) {
   sample_strategy <- match.arg(sample_strategy)
   rd_ci_method <- match.arg(rd_ci_method)
 
@@ -682,7 +712,9 @@ modelMakerAdjustedSetsRD <- function(variable_name,
     sample_strategy = sample_strategy,
     glm_control = glm_control,
     include_intercept = TRUE,
-    ref_level = ref_level
+    ref_level = ref_level,
+    family = family,
+    offset = offset
   )
 
   or_rows <- runner$rows
@@ -697,50 +729,51 @@ modelMakerAdjustedSetsRD <- function(variable_name,
     wide_cols = stage_cols
   )
 
-  rd_rows <- data.frame()
-  if (isTRUE(include_rd) && identical(runner$family, "binomial")) {
-    rd_parts <- lapply(runner$stages, .react_extract_rd_rows, predictor = variable_name,
-                       n_sim = n_sim, dp = NULL, ci_method = rd_ci_method)
-    rd_rows <- dplyr::bind_rows(rd_parts)
+  # Marginal risk differences and risk ratios, which need a binary outcome.
+  marginal_rows <- list(RD = data.frame(), RR = data.frame())
+  marginal_wide <- list(RD = NULL, RR = NULL)
+  for (m in c(if (isTRUE(include_rd)) "RD", if (isTRUE(include_rr)) "RR")) {
+    if (!isTRUE(runner$spec$binary)) break
+    marginal_rows[[m]] <- dplyr::bind_rows(lapply(
+      runner$stages, .react_extract_rd_rows, predictor = variable_name,
+      n_sim = n_sim, dp = NULL, ci_method = rd_ci_method, measure = m
+    ))
+    if (nrow(marginal_rows[[m]])) {
+      marginal_wide[[m]] <- .react_wide_from_long(
+        long_df = marginal_rows[[m]],
+        effect_col = m,
+        sf = if (m == "RD") sf + 1L else sf,
+        format = format,
+        simpleround = simpleround,
+        include_nobs = identical(sample_strategy, "common_per_predictor"),
+        wide_cols = sub("_OR$", paste0("_", m), stage_cols)
+      )
+    }
   }
-  df_rd <- if (nrow(rd_rows)) {
-    .react_wide_from_long(
-      long_df = rd_rows,
-      effect_col = "RD",
-      sf = sf + 1L,
-      format = format,
-      simpleround = simpleround,
-      include_nobs = identical(sample_strategy, "common_per_predictor"),
-      wide_cols = sub("_OR$", "_RD", stage_cols)
-    )
-  } else NULL
 
   diag_df <- runner$diagnostics
   if (nrow(diag_df)) {
-    rd_counts <- integer(nrow(diag_df))
-    if (nrow(rd_rows)) {
-      rd_count_map <- tapply(rd_rows$Level, rd_rows$stage_id, length)
-      rd_counts <- unname(rd_count_map[match(diag_df$stage, names(rd_count_map))])
-      rd_counts[is.na(rd_counts)] <- 0L
+    count_rows <- function(rows) {
+      if (!nrow(rows)) return(integer(nrow(diag_df)))
+      counts <- tapply(rows$Level, rows$stage_id, length)
+      counts <- unname(counts[match(diag_df$stage, names(counts))])
+      counts[is.na(counts)] <- 0L
+      as.integer(counts)
     }
-    diag_df$rd_rows <- rd_counts
+    diag_df$rd_rows <- count_rows(marginal_rows$RD)
+    if (isTRUE(include_rr)) diag_df$rr_rows <- count_rows(marginal_rows$RR)
   }
 
-  crude_or <- if (isTRUE(include_crude)) or_rows[or_rows$stage_id == "crude", , drop = FALSE] else NULL
-  crude_rd <- if (isTRUE(include_rd) && isTRUE(include_crude) && nrow(rd_rows)) {
-    rd_rows[rd_rows$stage_id == "crude", , drop = FALSE]
-  } else NULL
-
-  adj_or_outputs <- lapply(names(adj_sets), function(adj_name) {
-    or_rows[or_rows$stage_id == adj_name, , drop = FALSE]
-  })
-  names(adj_or_outputs) <- names(adj_sets)
-
-  adj_rd_outputs <- lapply(names(adj_sets), function(adj_name) {
-    if (!nrow(rd_rows)) return(data.frame())
-    rd_rows[rd_rows$stage_id == adj_name, , drop = FALSE]
-  })
-  names(adj_rd_outputs) <- names(adj_sets)
+  stage_rows <- function(rows, stage_id) {
+    if (!nrow(rows) || !"stage_id" %in% names(rows)) return(rows[0, , drop = FALSE])
+    rows[rows$stage_id == stage_id, , drop = FALSE]
+  }
+  crude_rows <- function(rows, wanted = TRUE) {
+    if (isTRUE(wanted) && isTRUE(include_crude) && nrow(rows)) stage_rows(rows, "crude") else NULL
+  }
+  adjusted_rows <- function(rows) {
+    stats::setNames(lapply(names(adj_sets), function(adj_name) stage_rows(rows, adj_name)), names(adj_sets))
+  }
 
   stage_nobs <- vapply(runner$stages, function(stage) {
     if (is.null(stage$data)) 0L else nrow(stage$data)
@@ -748,12 +781,17 @@ modelMakerAdjustedSetsRD <- function(variable_name,
 
   list(
     model_df_ORs = df_or,
-    model_df_RDs = if (isTRUE(include_rd)) df_rd else NULL,
-    crude_model_OR = crude_or,
-    crude_model_RD = crude_rd,
-    adj_or_outputs = adj_or_outputs,
-    adj_rd_outputs = adj_rd_outputs,
+    model_df_RDs = if (isTRUE(include_rd)) marginal_wide$RD else NULL,
+    model_df_RRs = if (isTRUE(include_rr)) marginal_wide$RR else NULL,
+    crude_model_OR = crude_rows(or_rows),
+    crude_model_RD = crude_rows(marginal_rows$RD, include_rd),
+    crude_model_RR = crude_rows(marginal_rows$RR, include_rr),
+    adj_or_outputs = adjusted_rows(or_rows),
+    adj_rd_outputs = adjusted_rows(marginal_rows$RD),
+    adj_rr_outputs = adjusted_rows(marginal_rows$RR),
     diagnostics = diag_df,
+    family = runner$spec$name,
+    measure = runner$spec$measure,
     n_complete_cases = if (length(stage_nobs)) max(stage_nobs) else 0L,
     n_original_cases = sum(!is.na(data[[outcome]]))
   )
@@ -784,7 +822,10 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
                               parallel_restarts = 2,
                               retry_sleep = 1,
                               sample_strategy = c("common_per_predictor", "per_model"),
-                              rd_ci_method = c("delta", "simulation")) {
+                              rd_ci_method = c("delta", "simulation"),
+                              include_rr = FALSE,
+                              family = "auto",
+                              offset = NULL) {
   sample_strategy <- match.arg(sample_strategy)
   rd_ci_method <- match.arg(rd_ci_method)
 
@@ -799,8 +840,12 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   list_of_variables_of_interest <- unique(list_of_variables_of_interest)
   if (length(list_of_variables_of_interest) == 0) stop("No variables to analyse")
 
-  family <- .react_detect_outcome_family(dat[[outcome]], outcome = outcome)
-  message(if (family == "binomial") "Assuming binomial outcome" else "Assuming gaussian outcome")
+  spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome)
+  .react_check_offset(offset, spec, dat)
+  message(if (identical(family, "auto")) "Assuming " else "Fitting ", spec$label, " models.")
+  # Marginal effects need a binary outcome; other families skip them.
+  marginal <- if (isTRUE(spec$binary)) c(if (isTRUE(include_rd)) "RD", if (isTRUE(include_rr)) "RR") else character(0)
+  tables <- c("or", if (isTRUE(include_rd)) "rd", if (isTRUE(include_rr)) "rr")
 
   # --- save paths (RDS-first checkpointing assumed available) --------------
   savepath_runs <- NULL
@@ -833,11 +878,11 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   # Hashes are computed once here, not on parallel workers.
   spec_hash_for <- function(pred_name) {
     sets <- sets_for(pred_name)
-    cols <- intersect(unique(c(outcome, pred_name, unlist(sets, use.names = FALSE))), names(dat))
+    cols <- intersect(unique(c(outcome, pred_name, unlist(sets, use.names = FALSE), offset)), names(dat))
     rlang::hash(list(
-      outcome = outcome, predictor = pred_name, sets = sets,
-      include_crude = include_crude, include_rd = include_rd, n_sim = n_sim,
-      rd_ci_method = rd_ci_method, sample_strategy = sample_strategy,
+      outcome = outcome, predictor = pred_name, sets = sets, family = spec$name, offset = offset,
+      include_crude = include_crude, include_rd = include_rd, include_rr = include_rr,
+      n_sim = n_sim, rd_ci_method = rd_ci_method, sample_strategy = sample_strategy,
       glm_control = glm_control, retry_failed = retry_failed, max_retries = max_retries,
       sf = sf, format = format, simpleround = simpleround,
       remove_intercept_from_results = remove_intercept_from_results,
@@ -847,6 +892,16 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   spec_hashes <- NULL
   if (!is.null(savepath_runs)) {
     spec_hashes <- vapply(list_of_variables_of_interest, spec_hash_for, character(1))
+  }
+
+  empty_result <- function(diagnostics = data.frame()) {
+    out <- list()
+    for (tab in tables) {
+      out[[paste0("tidy_res_", tab)]] <- data.frame()
+      out[[paste0("tidy_plot_", tab)]] <- data.frame()
+    }
+    out$diagnostics <- diagnostics
+    out
   }
 
   # ---------- per-variable worker (unchanged modelling logic) --------------
@@ -869,7 +924,10 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
                                  include_rd = include_rd, n_sim = n_sim,
                                  glm_control = ctrl,
                                  sample_strategy = sample_strategy,
-                                 rd_ci_method = rd_ci_method),
+                                 rd_ci_method = rd_ci_method,
+                                 include_rr = include_rr,
+                                 family = spec$name,
+                                 offset = offset),
         error = function(e) e
       )
       if (inherits(res, "error")) {
@@ -886,25 +944,19 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
     a1 <- run_once(glm_control, attempt = 1L)
     all_diag <- .coerce_df_types(if (is.null(a1$diag)) data.frame() else a1$diag, "diagnostics")
 
-    # retry (model-level) if gaps
-    has_gaps <- function(res, sets, need_crude, need_rd) {
+    # retry (model-level) if any expected table has gaps
+    has_rows <- function(x) !is.null(x) && nrow(x) > 0
+    has_gaps <- function(res) {
       if (is.null(res)) return(TRUE)
-      gap <- FALSE
-      if (need_crude) {
-        if (is.null(res$crude_model_OR) || !nrow(res$crude_model_OR)) gap <- TRUE
-        if (need_rd && (is.null(res$crude_model_RD) || !nrow(res$crude_model_RD))) gap <- TRUE
+      for (m in c("OR", marginal)) {
+        if (isTRUE(include_crude) && !has_rows(res[[paste0("crude_model_", m)]])) return(TRUE)
+        adjusted <- res[[paste0("adj_", tolower(m), "_outputs")]]
+        if (!all(names(sets) %in% names(adjusted)[vapply(adjusted, has_rows, logical(1))])) return(TRUE)
       }
-      want <- names(sets)
-      got_or <- names(res$adj_or_outputs)[vapply(res$adj_or_outputs, function(x) !is.null(x) && nrow(x) > 0, logical(1))]
-      if (!all(want %in% got_or)) gap <- TRUE
-      if (need_rd) {
-        got_rd <- names(res$adj_rd_outputs)[vapply(res$adj_rd_outputs, function(x) !is.null(x) && nrow(x) > 0, logical(1))]
-        if (!all(want %in% got_rd)) gap <- TRUE
-      }
-      gap
+      FALSE
     }
 
-    need_retry <- isTRUE(retry_failed) && has_gaps(a1$res, sets, include_crude, include_rd) && max_retries >= 1L
+    need_retry <- isTRUE(retry_failed) && has_gaps(a1$res) && max_retries >= 1L
     if (need_retry) {
       message("Retrying variable '", pred_name, "' with stricter glm.control ...")
       ctrl2 <- glm_control
@@ -912,15 +964,13 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
       ctrl2$maxit   <- max(100L, as.integer(ctrl2$maxit * 2L))
       ctrl2$epsilon <- if (is.null(ctrl2$epsilon)) 1e-8 else min(1e-8, ctrl2$epsilon / 10)
       a2 <- run_once(ctrl2, attempt = 2L)
-      if (!is.null(a2$diag) && nrow(a2$diag)) all_diag <- rbind(all_diag, .coerce_df_types(a2$diag, "diagnostics"))
+      if (!is.null(a2$diag) && nrow(a2$diag)) all_diag <- dplyr::bind_rows(all_diag, .coerce_df_types(a2$diag, "diagnostics"))
       if (!is.null(a2$res)) a1$res <- a2$res
     }
 
     if (is.null(a1$res)) {
       message("Variable ", pred_name, ": failed completely after retries.")
-      return(list(tidy_res_or  = data.frame(), tidy_plot_or  = data.frame(),
-                  tidy_res_rd  = data.frame(), tidy_plot_rd  = data.frame(),
-                  diagnostics  = all_diag))
+      return(empty_result(all_diag))
     }
 
     res <- a1$res
@@ -938,52 +988,41 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
     }
 
     # --------- plot tables (keep [reference]) ---------
-    tidy_plot_or <- dplyr::bind_rows(res$adj_or_outputs, .id = "adjustment_label")
-    if (nrow(tidy_plot_or) && !"adjustment" %in% names(tidy_plot_or)) {
-      tidy_plot_or <- dplyr::left_join(tidy_plot_or, adj_map, by = "adjustment_label")
-    }
-
-    crude_or_plot <- NULL
-    if (isTRUE(include_crude) && !is.null(res$crude_model_OR) && nrow(res$crude_model_OR)) {
-      crude_or_plot <- res$crude_model_OR
-      if (nrow(crude_or_plot)) {
-        crude_or_plot$model            <- "crude"
-        crude_or_plot$adjustment_label <- "crude"
-        crude_or_plot$adjustment       <- 0L
+    plot_table <- function(m) {
+      plot_df <- dplyr::bind_rows(res[[paste0("adj_", tolower(m), "_outputs")]], .id = "adjustment_label")
+      if (nrow(plot_df) && !"adjustment" %in% names(plot_df)) {
+        plot_df <- dplyr::left_join(plot_df, adj_map, by = "adjustment_label")
       }
-    }
-    if (!is.null(crude_or_plot) && nrow(crude_or_plot)) tidy_plot_or <- dplyr::bind_rows(crude_or_plot, tidy_plot_or)
-    if (!"adjustment" %in% names(tidy_plot_or) && nrow(tidy_plot_or)) tidy_plot_or$adjustment <- ifelse(tidy_plot_or$model == "crude", 0L, NA_integer_)
-    if (isTRUE(remove_intercept_from_results) && nrow(tidy_plot_or) && "is_intercept" %in% names(tidy_plot_or)) {
-      tidy_plot_or <- tidy_plot_or[!tidy_plot_or$is_intercept, , drop = FALSE]
-    }
-
-    tidy_plot_rd <- dplyr::bind_rows(res$adj_rd_outputs, .id = "adjustment_label")
-    if (nrow(tidy_plot_rd) && !"adjustment" %in% names(tidy_plot_rd)) {
-      tidy_plot_rd <- dplyr::left_join(tidy_plot_rd, adj_map, by = "adjustment_label")
-    }
-
-    crude_rd_plot <- NULL
-    if (isTRUE(include_rd) && isTRUE(include_crude) && !is.null(res$crude_model_RD) && nrow(res$crude_model_RD)) {
-      crude_rd_plot <- res$crude_model_RD
-      if (nrow(crude_rd_plot)) {
-        crude_rd_plot$model            <- "crude"
-        crude_rd_plot$adjustment_label <- "crude"
-        crude_rd_plot$adjustment       <- 0L
+      crude <- res[[paste0("crude_model_", m)]]
+      if (isTRUE(include_crude) && has_rows(crude)) {
+        crude$model            <- "crude"
+        crude$adjustment_label <- "crude"
+        crude$adjustment       <- 0L
+        plot_df <- dplyr::bind_rows(crude, plot_df)
       }
+      if (!"adjustment" %in% names(plot_df) && nrow(plot_df)) {
+        plot_df$adjustment <- ifelse(plot_df$model == "crude", 0L, NA_integer_)
+      }
+      if (isTRUE(remove_intercept_from_results) && nrow(plot_df) && "is_intercept" %in% names(plot_df)) {
+        plot_df <- plot_df[!plot_df$is_intercept, , drop = FALSE]
+      }
+      plot_df
     }
-    if (!is.null(crude_rd_plot) && nrow(crude_rd_plot)) tidy_plot_rd <- dplyr::bind_rows(crude_rd_plot, tidy_plot_rd)
-    if (!"adjustment" %in% names(tidy_plot_rd) && nrow(tidy_plot_rd)) tidy_plot_rd$adjustment <- ifelse(tidy_plot_rd$model == "crude", 0L, NA_integer_)
 
-    out <- list(tidy_res_or  = res$model_df_ORs,
-                tidy_plot_or = tidy_plot_or,
-                tidy_res_rd  = res$model_df_RDs,
-                tidy_plot_rd = tidy_plot_rd,
-                diagnostics  = all_diag)
+    out <- list(tidy_res_or = res$model_df_ORs, tidy_plot_or = plot_table("OR"))
+    if (isTRUE(include_rd)) {
+      out$tidy_res_rd <- res$model_df_RDs
+      out$tidy_plot_rd <- plot_table("RD")
+    }
+    if (isTRUE(include_rr)) {
+      out$tidy_res_rr <- res$model_df_RRs
+      out$tidy_plot_rr <- plot_table("RR")
+    }
+    out$diagnostics <- all_diag
 
     if (isTRUE(save_immediately) && !is.null(savepath_runs)) {
       var_id  <- .sanitize_var_id(pred_name)
-      fmap    <- .var_filemap(savepath_runs, var_id, include_rd = include_rd)
+      fmap    <- .var_filemap(savepath_runs, var_id, tables = tables)
       .save_var_outputs(fmap, out, diagnostics = all_diag, write_csv = TRUE,
                         spec_hash = spec_hashes[[pred_name]])
     }
@@ -995,7 +1034,7 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   completed <- logical(length(var_ids))
   if (!is.null(savepath_runs)) {
     for (i in seq_along(var_ids)) {
-      fmap <- .var_filemap(savepath_runs, var_ids[i], include_rd = include_rd)
+      fmap <- .var_filemap(savepath_runs, var_ids[i], tables = tables)
       completed[i] <- .has_complete_outputs(fmap, spec_hash = spec_hashes[[i]])
       if (!completed[i] && .has_complete_outputs(fmap)) {
         message("Checkpoint for '", list_of_variables_of_interest[i],
@@ -1013,14 +1052,14 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   # ---------- load pre-existing --------------------------------------------
   preloaded <- list()
   if (length(done_vars) && !is.null(savepath_runs)) {
-    for (v in done_vars) preloaded[[v]] <- .load_var_outputs(.var_filemap(savepath_runs, .sanitize_var_id(v), include_rd = include_rd))
+    for (v in done_vars) preloaded[[v]] <- .load_var_outputs(.var_filemap(savepath_runs, .sanitize_var_id(v), tables = tables))
   }
 
   # ---------- run outstanding with robust parallel + restart ----------------
   computed <- .run_todo_with_restarts(todo_vars,
                                       single_var_runner = single_var_runner,
                                       savepath_runs = savepath_runs,
-                                      include_rd = include_rd,
+                                      tables = tables,
                                       ncores = ncores,
                                       parallel_restarts = parallel_restarts,
                                       shrink_workers_on_retry = TRUE,
@@ -1031,13 +1070,7 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   results_by_raw <- preloaded
   for (v in names(computed)) results_by_raw[[v]] <- computed[[v]]
   for (v in list_of_variables_of_interest) {
-    if (is.null(results_by_raw[[v]])) {
-      results_by_raw[[v]] <- list(tidy_res_or  = data.frame(),
-                                  tidy_plot_or = data.frame(),
-                                  tidy_res_rd  = data.frame(),
-                                  tidy_plot_rd = data.frame(),
-                                  diagnostics  = data.frame())
-    }
+    if (is.null(results_by_raw[[v]])) results_by_raw[[v]] <- empty_result()
   }
 
   pretty_names <- .react_variable_labels(list_of_variables_of_interest, dat,
@@ -1046,45 +1079,60 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   ordered_results <- lapply(list_of_variables_of_interest, function(v) results_by_raw[[v]])
   names(ordered_results) <- pretty_names
 
-  out_df_or   <- dplyr::bind_rows(lapply(ordered_results, `[[`, "tidy_res_or"),   .id = "Variable")
-  out_plot_or <- dplyr::bind_rows(lapply(ordered_results, `[[`, "tidy_plot_or"),  .id = "Variable")
-  out_df_rd   <- dplyr::bind_rows(lapply(ordered_results, `[[`, "tidy_res_rd"),   .id = "Variable")
-  out_plot_rd <- dplyr::bind_rows(lapply(ordered_results, `[[`, "tidy_plot_rd"),  .id = "Variable")
-  out_diag    <- dplyr::bind_rows(lapply(ordered_results, `[[`, "diagnostics"),   .id = "Variable")
+  combine <- function(key) {
+    as.data.frame(dplyr::bind_rows(lapply(ordered_results, `[[`, key), .id = "Variable"),
+                  stringsAsFactors = FALSE)
+  }
+  # Formatted (df) and numeric (plot) tables, keyed by measure.
+  df_out <- list(OR = combine("tidy_res_or"))
+  plot_out <- list(OR = combine("tidy_plot_or"))
+  for (m in c(if (isTRUE(include_rd)) "RD", if (isTRUE(include_rr)) "RR")) {
+    df_out[[m]] <- combine(paste0("tidy_res_", tolower(m)))
+    plot_out[[m]] <- combine(paste0("tidy_plot_", tolower(m)))
+  }
+  out_diag <- combine("diagnostics")
 
-  if (family == "gaussian") {
-    if ("OR" %in% names(out_plot_or))    out_plot_or <- dplyr::rename(out_plot_or,  Beta = OR)
-    if ("crude_mod_OR" %in% names(out_df_or)) out_df_or <- dplyr::rename(out_df_or, crude_mod_Beta = crude_mod_OR)
+  # Name coefficient columns after the family's measure (OR, RR, IRR or Beta).
+  plot_out$OR <- .react_label_measure(plot_out$OR, spec$measure)
+  df_out$OR <- .react_label_measure(df_out$OR, spec$measure, wide = TRUE)
+
+  for (m in names(df_out)) {
+    plot_df <- plot_out[[m]]
+    if (remove_intercept_from_results && "is_intercept" %in% names(plot_df)) {
+      plot_df <- plot_df[!plot_df$is_intercept, , drop = FALSE]
+    }
+    names(plot_df)[names(plot_df) == "Level"] <- "Category"
+    plot_out[[m]] <- plot_df
+
+    df <- df_out[[m]]
+    names(df)[names(df) == "Level"] <- "Category"
+    names(df)[names(df) == "outcome_level"] <- "Outcome"
+    # Stages without an estimate show "-", like reference rows.
+    df[] <- lapply(df, function(col) if (is.character(col)) replace(col, is.na(col), "-") else col)
+    df_out[[m]] <- df
   }
 
-  if (remove_intercept_from_results) {
-    if ("is_intercept" %in% names(out_plot_or)) out_plot_or <- out_plot_or[!out_plot_or$is_intercept, , drop = FALSE]
-    if ("is_intercept" %in% names(out_plot_rd)) out_plot_rd <- out_plot_rd[!out_plot_rd$is_intercept, , drop = FALSE]
-  }
-
-  if ("Level" %in% names(out_df_or))   out_df_or   <- dplyr::rename(out_df_or,   Category = Level)
-  if ("Level" %in% names(out_plot_or)) out_plot_or <- dplyr::rename(out_plot_or, Category = Level)
-  if (nrow(out_df_rd) && "Level" %in% names(out_df_rd))   out_df_rd   <- dplyr::rename(out_df_rd,   Category = Level)
-  if (nrow(out_plot_rd) && "Level" %in% names(out_plot_rd)) out_plot_rd <- dplyr::rename(out_plot_rd, Category = Level)
-
-  out_df_or[is.na(out_df_or)] <- "-"
-
+  output_files <- c(OR = "", RD = "_RDs", RR = "_RRs")
   if (!is.null(savepath)) {
-    .atomic_write_csv(out_df_or,   file.path(savepath, "df_output.csv"))
-    .atomic_write_csv(out_plot_or, file.path(savepath, "plot_output.csv"))
-    if (nrow(out_df_rd))   .atomic_write_csv(out_df_rd,   file.path(savepath, "df_output_RDs.csv"))
-    if (nrow(out_plot_rd)) .atomic_write_csv(out_plot_rd, file.path(savepath, "plot_output_RDs.csv"))
+    for (m in names(df_out)) {
+      for (kind in c("df", "plot")) {
+        tab <- if (kind == "df") df_out[[m]] else plot_out[[m]]
+        if (m != "OR" && !nrow(tab)) next
+        stem <- file.path(savepath, paste0(kind, "_output", output_files[[m]]))
+        .atomic_write_csv(tab, paste0(stem, ".csv"))
+        .atomic_write_rds(tab, paste0(stem, ".rds"))
+      }
+    }
     .atomic_write_csv(out_diag,    file.path(savepath, "diagnostics.csv"))
-    .atomic_write_rds(out_df_or,   file.path(savepath, "df_output.rds"))
-    .atomic_write_rds(out_plot_or, file.path(savepath, "plot_output.rds"))
-    if (nrow(out_df_rd))   .atomic_write_rds(out_df_rd,   file.path(savepath, "df_output_RDs.rds"))
-    if (nrow(out_plot_rd)) .atomic_write_rds(out_plot_rd, file.path(savepath, "plot_output_RDs.rds"))
     .atomic_write_rds(out_diag,    file.path(savepath, "diagnostics.rds"))
   }
 
-  list(df_output       = out_df_or,
-       plot_output     = out_plot_or,
-       df_output_RDs   = if (nrow(out_df_rd)) out_df_rd else NULL,
-       plot_output_RDs = if (nrow(out_plot_rd)) out_plot_rd else NULL,
+  non_empty <- function(x) if (!is.null(x) && nrow(x)) x else NULL
+  list(df_output       = df_out$OR,
+       plot_output     = plot_out$OR,
+       df_output_RDs   = non_empty(df_out$RD),
+       plot_output_RDs = non_empty(plot_out$RD),
+       df_output_RRs   = non_empty(df_out$RR),
+       plot_output_RRs = non_empty(plot_out$RR),
        diagnostics     = out_diag)
 }

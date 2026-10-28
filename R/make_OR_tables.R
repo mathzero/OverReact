@@ -7,7 +7,9 @@ modelMakerSequential <- function(variable_name, data, sf = 2, format = "f", simp
                                  joint_adjustment_vars = c("age_group_named", "sex", "region_named",
                                                            "ethnic_new", "imd_quintile_cat"),
                                  sample_strategy = c("common_per_predictor", "per_model"),
-                                 glm_control = stats::glm.control(maxit = 50)) {
+                                 glm_control = stats::glm.control(maxit = 50),
+                                 family = "auto",
+                                 offset = NULL) {
   sample_strategy <- match.arg(sample_strategy)
 
   if (!is.data.frame(data)) stop("data must be a data.frame")
@@ -34,7 +36,9 @@ modelMakerSequential <- function(variable_name, data, sf = 2, format = "f", simp
     sample_strategy = sample_strategy,
     glm_control = glm_control,
     include_intercept = TRUE,
-    ref_level = ref_level
+    ref_level = ref_level,
+    family = family,
+    offset = offset
   )
 
   plot_rows <- runner$rows
@@ -134,7 +138,9 @@ ModelMakerMulti <- function(dat,
                             remove_intercept_from_results = TRUE,
                             ncores                      = NULL,
                             sample_strategy            = c("common_per_predictor", "per_model"),
-                            glm_control                = stats::glm.control(maxit = 50)) {
+                            glm_control                = stats::glm.control(maxit = 50),
+                            family                     = "auto",
+                            offset                     = NULL) {
   sample_strategy <- match.arg(sample_strategy)
 
   if (!is.data.frame(dat)) stop("dat must be a data.frame")
@@ -154,11 +160,9 @@ ModelMakerMulti <- function(dat,
     warning("Adjustment variables not found in data: ", paste(missing_adj, collapse = ", "))
   }
 
-  family <- .react_detect_outcome_family(dat[[outcome]], outcome = outcome)
-  message(
-    if (identical(family, "binomial")) "Assuming binomial outcome (logit GLM)."
-    else "Assuming gaussian outcome (identity GLM)."
-  )
+  spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome)
+  .react_check_offset(offset, spec, dat)
+  message(if (identical(family, "auto")) "Assuming " else "Fitting ", spec$label, " models.")
 
   single_var_runner <- function(pred_name) {
     stage_specs <- .react_build_sequential_stage_specs(
@@ -175,7 +179,9 @@ ModelMakerMulti <- function(dat,
       stage_specs = stage_specs,
       sample_strategy = sample_strategy,
       glm_control = glm_control,
-      include_intercept = TRUE
+      include_intercept = TRUE,
+      family = spec$name,
+      offset = offset
     )
 
     plot_rows <- runner$rows
@@ -251,10 +257,10 @@ ModelMakerMulti <- function(dat,
   if (nrow(out_df) && "Level" %in% names(out_df)) out_df <- dplyr::rename(out_df, Category = Level)
   if (nrow(out_plot) && "Level" %in% names(out_plot)) out_plot <- dplyr::rename(out_plot, Category = Level)
 
-  if (identical(family, "gaussian")) {
-    if (nrow(out_plot) && "OR" %in% names(out_plot)) out_plot <- dplyr::rename(out_plot, Beta = OR)
-    if (nrow(out_df) && "crude_mod_OR" %in% names(out_df)) out_df <- dplyr::rename(out_df, crude_mod_Beta = crude_mod_OR)
-  }
+  # Name estimate columns after the family's measure (OR, RR, IRR or Beta).
+  out_plot <- .react_label_measure(out_plot, spec$measure)
+  out_df <- .react_label_measure(out_df, spec$measure, wide = TRUE)
+  names(out_df)[names(out_df) == "outcome_level"] <- "Outcome"
 
   list(
     df_output = out_df,

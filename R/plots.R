@@ -109,12 +109,12 @@ plotReactVIF <- function(vif_df,
 }
 
 
-.react_detect_effect <- function(df, effect = c("auto", "OR", "Beta", "RD")) {
+.react_detect_effect <- function(df, effect = c("auto", "OR", "RR", "IRR", "Beta", "RD")) {
   effect <- match.arg(effect)
-  available <- intersect(c("OR", "Beta", "RD"), names(df))
+  available <- intersect(c("OR", "RR", "IRR", "Beta", "RD"), names(df))
 
   if (!length(available)) {
-    stop("Could not find an effect column. Expected one of: OR, Beta, RD.")
+    stop("Could not find an effect column. Expected one of: OR, RR, IRR, Beta, RD.")
   }
 
   if (effect != "auto") {
@@ -124,13 +124,7 @@ plotReactVIF <- function(vif_df,
     return(effect)
   }
 
-  if ("OR" %in% available) {
-    return("OR")
-  }
-  if ("Beta" %in% available) {
-    return("Beta")
-  }
-  "RD"
+  available[[1]]
 }
 
 
@@ -208,7 +202,7 @@ plotReactVIF <- function(vif_df,
 
 
 .react_standardise_plot_df <- function(df,
-                                       effect = c("auto", "OR", "Beta", "RD"),
+                                       effect = c("auto", "OR", "RR", "IRR", "Beta", "RD"),
                                        variables = NULL,
                                        adjustment_labels = NULL,
                                        include_reference = TRUE) {
@@ -253,6 +247,11 @@ plotReactVIF <- function(vif_df,
   std <- .react_apply_adjustment_labels(std, adjustment_labels = adjustment_labels)
   std <- .react_normalise_adjustment(std)
 
+  # Multinomial rows are labelled with their outcome level as well as their category.
+  if ("outcome_level" %in% names(df)) {
+    has_outcome <- !is.na(df$outcome_level)
+    std$Category[has_outcome] <- paste0(df$outcome_level[has_outcome], ": ", std$Category[has_outcome])
+  }
   std$Category_display <- std$Category
   blank_category <- is.na(std$Category_display) | trimws(std$Category_display) == ""
   std$Category_display[blank_category] <- std$Variable[blank_category]
@@ -404,10 +403,9 @@ plotReactVIF <- function(vif_df,
   out <- do.call(rbind, out_list)
   rownames(out) <- NULL
 
-  effect_name <- "Beta"
-  if (!is.null(model$family$family) && identical(model$family$family, "binomial")) {
-    effect_name <- "OR"
-  }
+  # Exponentiated measures (OR, RR, IRR) plot on a ratio scale; anything else as Beta.
+  effect_name <- .react_model_measure(model)
+  if (!effect_name %in% .react_ratio_measures) effect_name <- "Beta"
 
   out <- data.frame(
     Variable = as.character(out$Variable),
@@ -432,7 +430,7 @@ plotReactVIF <- function(vif_df,
 
 
 .react_coerce_forest_input <- function(x,
-                                       effect = c("auto", "OR", "Beta", "RD"),
+                                       effect = c("auto", "OR", "RR", "IRR", "Beta", "RD"),
                                        variables = NULL,
                                        adjustment_labels = NULL,
                                        name_fun = NULL,
@@ -497,6 +495,18 @@ plotReactVIF <- function(vif_df,
     return(out)
   }
 
+  # Marginal effects come from their own tables; effect = "RR" prefers marginal risk
+  # ratios when they were requested, otherwise the model's own RR estimates.
+  if (is.list(x) && !is.null(x$plot_output_RRs) && identical(effect, "RR")) {
+    return(.react_standardise_plot_df(
+      x$plot_output_RRs,
+      effect = "RR",
+      variables = variables,
+      adjustment_labels = adjustment_labels,
+      include_reference = include_reference
+    ))
+  }
+
   if (is.list(x) && !is.null(x$plot_output_RDs) && identical(effect, "RD")) {
     return(.react_standardise_plot_df(
       x$plot_output_RDs,
@@ -533,7 +543,7 @@ plotReactForest <- function(univ_df_plot,
                             strip_text_size = 8,
                             arrangeByOR = FALSE,
                             variables = NULL,
-                            effect = c("auto", "OR", "Beta", "RD"),
+                            effect = c("auto", "OR", "RR", "IRR", "Beta", "RD"),
                             include_reference = TRUE,
                             name_fun = NULL,
                             auto_pretty = TRUE,
@@ -560,14 +570,17 @@ plotReactForest <- function(univ_df_plot,
 
   effect_name <- attr(df, "effect_name")
   if (is.null(effect_name)) effect_name <- "OR"
+  ratio_scale <- effect_name %in% .react_ratio_measures
 
   if (is.null(null_value)) {
-    null_value <- if (identical(effect_name, "OR")) 1 else 0
+    null_value <- if (ratio_scale) 1 else 0
   }
 
   if (is.null(xlab)) {
     xlab <- switch(effect_name,
                    OR = "Odds ratio",
+                   RR = "Risk ratio",
+                   IRR = "Incidence rate ratio",
                    Beta = "Beta coefficient",
                    RD = "Risk difference",
                    effect_name)
@@ -688,10 +701,10 @@ plotReactForest <- function(univ_df_plot,
     ggplot2::position_dodge2(width = 0.5, reverse = TRUE)
   }
 
-  if (!identical(effect_name, "OR") && identical(xrange, c(0.25, 16))) {
+  if (!ratio_scale && identical(xrange, c(0.25, 16))) {
     xrange <- NULL
   }
-  if (identical(effect_name, "OR") && is.null(xrange)) xrange <- c(0.25, 16)
+  if (ratio_scale && is.null(xrange)) xrange <- c(0.25, 16)
 
   # xrange zooms the coordinate system instead of limiting the scale: scale limits turn
   # out-of-range estimates and bounds into NA, and the layers then silently drop them.
@@ -787,7 +800,7 @@ plotReactForest <- function(univ_df_plot,
     ) +
     ggplot2::scale_alpha_manual(values = c(dark = 1, light = 0.3), guide = "none")
 
-  if (identical(effect_name, "OR")) {
+  if (ratio_scale) {
     breaks <- 2 ^ seq(log2(xrange[[1]]), log2(xrange[[2]]))
     p <- p + ggplot2::scale_y_continuous(
       trans = "log2",

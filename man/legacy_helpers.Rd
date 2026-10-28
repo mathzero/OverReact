@@ -21,6 +21,7 @@
 \alias{get_pretty_name}
 \alias{makeORTable}
 \alias{makeRDTable}
+\alias{makeRRTable}
 \alias{makeStratifiedPrevalenceTablePlottable}
 \alias{makeXtabPlottable}
 \alias{modelMakerAdjustedSetsRD}

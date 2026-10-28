@@ -18,8 +18,9 @@ test_that("unsupported outcome codings fail before any model is fitted", {
   dat$y12 <- dat$y + 1
   expect_error(run_rd(dat, "x", outcome = "y12"), "coded 1/2; recode it as 0/1")
 
+  # A categorical outcome with three levels is now modelled as multinomial.
   dat$y3 <- factor(sample(c("a", "b", "c"), nrow(dat), TRUE))
-  expect_error(run_rd(dat, "x", outcome = "y3"), "has 3 categories")
+  expect_true(all(run_rd(dat, "x", outcome = "y3")$plot_output$model_family == "multinomial"))
 
   dat$y_lgl <- dat$y == 1
   expect_true(all(run_rd(dat, "x", outcome = "y_lgl")$plot_output$model_family == "binomial"))

@@ -1,5 +1,21 @@
 # OverReact (development version)
 
+## New features
+
+* The modelling wrappers take a `family` argument: binomial, Gaussian,
+  Poisson and quasi-Poisson (incidence rate ratios, with an optional `offset`
+  of exposure times), log-binomial and modified Poisson (risk ratios, the latter
+  with sandwich standard errors), ordinal (proportional odds) and multinomial.
+  `family = "auto"` picks ordinal or multinomial models for categorical outcomes
+  with three or more levels.
+* `include_rr = TRUE` adds marginal (standardised) risk ratios alongside risk
+  differences, with `makeRRTable()` for single models.
+* Estimate columns are named after the family's measure (`OR`, `RR`, `IRR` or
+  `Beta`), and coefficient tables gain a `measure` column; probit and other
+  non-log links are no longer exponentiated.
+* `plotReactForest()` plots RR and IRR estimates on a ratio scale and labels
+  multinomial rows with their outcome level.
+
 ## Breaking changes
 
 * Data arguments no longer default to global `dfRes` or `covs` objects.
@@ -7,8 +23,11 @@
   as `ModelMakerMultiRD()` does.
 * Ordered factors are modelled with treatment contrasts (one estimate per
   level) instead of polynomial contrasts.
-* Outcomes coded other than 0/1, logical or two-level factor, and
-  categorical outcomes with three or more levels, raise an error up front.
+* Outcomes coded other than 0/1, logical or two-level factor raise an error up
+  front, and categorical outcomes with three or more levels get ordinal or
+  multinomial models instead of failing Gaussian fits.
+* Gaussian batch outputs name every stage column with `_Beta` (only the crude
+  column was renamed before).
 * `makeTablesNew()` and `stratifiedTables()` default to `sens = 1` and
   `spec = 1` (no assay correction). Pass `sens = 0.844, spec = 0.986` to
   reproduce earlier REACT defaults.

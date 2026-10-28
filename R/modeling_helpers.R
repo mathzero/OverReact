@@ -9,41 +9,18 @@
   paste0("`", gsub("`", "\\\\`", x, fixed = TRUE), "`")
 }
 
-.react_reformulate_safe <- function(terms, response = NULL) {
+# Formula from term names; `offset` names a column of exposure times entered as
+# offset(log(offset)), as Poisson rate models need.
+.react_reformulate_safe <- function(terms, response = NULL, offset = NULL) {
   terms <- unique(terms[nzchar(terms)])
-  rhs <- if (length(terms)) {
-    paste(vapply(terms, .react_quote_name, character(1)), collapse = " + ")
-  } else {
-    "1"
-  }
+  rhs_terms <- c(vapply(terms, .react_quote_name, character(1)),
+                 if (!is.null(offset)) paste0("offset(log(", .react_quote_name(offset), "))"))
+  rhs <- if (length(rhs_terms)) paste(rhs_terms, collapse = " + ") else "1"
   if (is.null(response)) {
     stats::as.formula(paste("~", rhs))
   } else {
     stats::as.formula(paste(.react_quote_name(response), "~", rhs))
   }
-}
-
-.react_detect_outcome_family <- function(y, outcome = "outcome") {
-  non_missing <- unique(stats::na.omit(y))
-  if (length(non_missing) < 2L) {
-    stop("Less than two unique non-missing values found for outcome '", outcome, "'.")
-  }
-  categorical <- is.factor(y) || is.character(y) || is.logical(y)
-  if (length(non_missing) == 2L) {
-    # glm() needs a binary outcome as 0/1, logical or a two-level factor; other codings
-    # (such as 1/2) would otherwise fail inside every model and leave empty results.
-    if (!categorical && !all(non_missing %in% c(0, 1))) {
-      stop("Binary outcome '", outcome, "' is coded ",
-           paste(sort(non_missing), collapse = "/"),
-           "; recode it as 0/1, logical or a two-level factor.")
-    }
-    return("binomial")
-  }
-  if (categorical) {
-    stop("Outcome '", outcome, "' has ", length(non_missing), " categories; ",
-         "only binary and continuous outcomes are supported.")
-  }
-  "gaussian"
 }
 
 .react_prepare_analysis_frame <- function(data, vars, drop_missing = TRUE) {
@@ -116,75 +93,76 @@
     is_reference = logical(),
     is_intercept = logical(),
     model_family = character(),
+    measure = character(),
     stringsAsFactors = FALSE
   )
 }
 
-.react_fit_glm_captured <- function(formula, data, family, control) {
-  warn_store <- character()
-  fit <- tryCatch(
-    withCallingHandlers(
-      stats::glm(formula, data = data, family = family, control = control),
-      warning = function(w) {
-        warn_store <<- c(warn_store, conditionMessage(w))
-        invokeRestart("muffleWarning")
-      }
-    ),
-    error = function(e) structure(list(`__error__` = conditionMessage(e)), class = "glm_error")
-  )
-  if (inherits(fit, "glm_error")) {
-    return(list(fit = NULL, warnings = warn_store, error = fit$`__error__`))
-  }
-  list(fit = fit, warnings = warn_store, error = NULL)
-}
-
-.react_build_coef_table <- function(mod, ref_level = NULL, dp = 3) {
+# Coefficient table for a fitted model. Estimates are exponentiated for ratio measures
+# (OR, RR, IRR); `measure` overrides the one inferred from the model's family and link.
+# Multinomial models add an outcome_level column, with one block of rows per level.
+.react_build_coef_table <- function(mod, ref_level = NULL, dp = 3, measure = NULL) {
   if (is.null(mod) || inherits(mod, "try-error")) {
     return(.react_empty_coef_table())
   }
 
   model_family <- tryCatch(mod$family$family, error = function(e) NULL)
   if (is.null(model_family) || !length(model_family)) {
-    model_family <- if (inherits(mod, "lm")) "gaussian" else NA_character_
+    model_family <- if (inherits(mod, "polr")) "ordinal" else if (inherits(mod, "multinom")) {
+      "multinomial"
+    } else if (inherits(mod, "lm")) "gaussian" else NA_character_
   }
-  exponentiate <- identical(model_family, "binomial")
+  if (is.null(measure)) measure <- .react_model_measure(mod)
+  exponentiate <- measure %in% .react_ratio_measures
 
+  wald_table <- function(term, est, se, crit = stats::qnorm(0.975),
+                         p = 2 * stats::pnorm(-abs(est / se))) {
+    data.frame(term_raw = term, OR = as.numeric(est), Lower = as.numeric(est - crit * se),
+               Upper = as.numeric(est + crit * se), P_value = as.numeric(p),
+               stringsAsFactors = FALSE)
+  }
   # Intervals use t quantiles when the model reports t tests (estimated dispersion, as in
   # Gaussian models), so they agree with the p-values; otherwise normal quantiles.
   critical_value <- function(p_col) {
     if (grepl("|t|", p_col, fixed = TRUE)) stats::qt(0.975, df = stats::df.residual(mod)) else stats::qnorm(0.975)
   }
-  if (inherits(mod, "gam")) {
-    coef_tab <- tryCatch({
-      summ <- mgcv::summary.gam(mod)
-      out <- as.data.frame(summ$p.table, stringsAsFactors = FALSE)
-      p_col <- grep("^Pr\\(", names(out), value = TRUE)[1]
-      crit <- critical_value(p_col)
-      out$term_raw <- rownames(out)
-      out$Lower <- out$Estimate - crit * out$`Std. Error`
-      out$Upper <- out$Estimate + crit * out$`Std. Error`
-      out <- out[, c("term_raw", "Estimate", "Lower", "Upper", p_col), drop = FALSE]
-      names(out) <- c("term_raw", "OR", "Lower", "Upper", "P_value")
-      out
-    }, error = function(e) NULL)
-  } else {
-    coef_tab <- tryCatch({
+
+  coef_tab <- tryCatch({
+    if (inherits(mod, "gam")) {
+      summ <- as.data.frame(mgcv::summary.gam(mod)$p.table, stringsAsFactors = FALSE)
+      p_col <- grep("^Pr\\(", names(summ), value = TRUE)[1]
+      wald_table(rownames(summ), summ$Estimate, summ$`Std. Error`,
+                 crit = critical_value(p_col), p = summ[[p_col]])
+    } else if (inherits(mod, "polr")) {
+      # Proportional-odds coefficients; the cut-points are not reported.
+      summ <- summary(mod)$coefficients[names(stats::coef(mod)), , drop = FALSE]
+      wald_table(rownames(summ), summ[, "Value"], summ[, "Std. Error"])
+    } else if (inherits(mod, "multinom")) {
+      est <- stats::coef(mod)
+      se <- summary(mod)$standard.errors
+      if (is.null(dim(est))) {
+        est <- matrix(est, nrow = 1, dimnames = list(mod$lev[2], names(est)))
+        se <- matrix(se, nrow = 1, dimnames = dimnames(est))
+      }
+      do.call(rbind, lapply(rownames(est), function(k) {
+        tab <- wald_table(colnames(est), est[k, ], se[k, ])
+        tab$outcome_level <- k
+        tab
+      }))
+    } else if (!is.null(mod$robust_vcov)) {
+      # Robust (sandwich) standard errors, as in modified Poisson models.
+      est <- stats::coef(mod)
+      est <- est[!is.na(est)]
+      wald_table(names(est), est, sqrt(diag(mod$robust_vcov))[names(est)])
+    } else {
       coef_summ <- summary(mod)$coefficients
       se_col <- grep("Std\\.|Std\\. Error|Standard Error", colnames(coef_summ), ignore.case = TRUE)[1]
       p_col <- grep("Pr\\(", colnames(coef_summ))[1]
       if (is.na(se_col) || is.na(p_col)) stop("Could not locate coefficient summary columns.")
-      crit <- critical_value(colnames(coef_summ)[p_col])
-      out <- data.frame(
-        term_raw = rownames(coef_summ),
-        OR = as.numeric(coef_summ[, 1]),
-        Lower = as.numeric(coef_summ[, 1] - crit * coef_summ[, se_col]),
-        Upper = as.numeric(coef_summ[, 1] + crit * coef_summ[, se_col]),
-        P_value = as.numeric(coef_summ[, p_col]),
-        stringsAsFactors = FALSE
-      )
-      out
-    }, error = function(e) NULL)
-  }
+      wald_table(rownames(coef_summ), coef_summ[, 1], coef_summ[, se_col],
+                 crit = critical_value(colnames(coef_summ)[p_col]), p = coef_summ[, p_col])
+    }
+  }, error = function(e) NULL)
 
   if (is.null(coef_tab) || !nrow(coef_tab)) {
     return(.react_empty_coef_table())
@@ -207,32 +185,29 @@
   coef_tab$is_reference <- FALSE
   coef_tab$is_intercept <- coef_tab$term_raw == "(Intercept)"
   coef_tab$model_family <- model_family
-  coef_tab <- coef_tab[, c("Level", "term_raw", "OR", "Lower", "Upper",
-                           "P_value", "is_reference", "is_intercept",
-                           "model_family"), drop = FALSE]
+  coef_tab$measure <- measure
+  cols <- c("Level", "term_raw", "OR", "Lower", "Upper", "P_value", "is_reference",
+            "is_intercept", "model_family", "measure")
+  if ("outcome_level" %in% names(coef_tab)) cols <- c("outcome_level", cols)
+  coef_tab <- coef_tab[, cols, drop = FALSE]
 
   if (!is.null(ref_level)) {
-    ref_row <- data.frame(
-      Level = paste0(ref_level, " [reference]"),
-      term_raw = NA_character_,
-      OR = NA_real_,
-      Lower = NA_real_,
-      Upper = NA_real_,
-      P_value = NA_real_,
-      is_reference = TRUE,
-      is_intercept = FALSE,
-      model_family = model_family,
-      stringsAsFactors = FALSE
-    )
-    if (any(coef_tab$is_intercept)) {
-      int_idx <- which(coef_tab$is_intercept)[1]
-      coef_tab <- rbind(
-        coef_tab[seq_len(int_idx), , drop = FALSE],
-        ref_row,
-        coef_tab[-seq_len(int_idx), , drop = FALSE]
-      )
+    insert_reference <- function(tab) {
+      ref_row <- tab[1, , drop = FALSE]
+      ref_row$Level <- paste0(ref_level, " [reference]")
+      ref_row$term_raw <- NA_character_
+      ref_row[c("OR", "Lower", "Upper", "P_value")] <- NA_real_
+      ref_row$is_reference <- TRUE
+      ref_row$is_intercept <- FALSE
+      int_idx <- which(tab$is_intercept)[1]
+      if (is.na(int_idx)) return(rbind(ref_row, tab))
+      rbind(tab[seq_len(int_idx), , drop = FALSE], ref_row, tab[-seq_len(int_idx), , drop = FALSE])
+    }
+    coef_tab <- if ("outcome_level" %in% names(coef_tab)) {
+      blocks <- split(coef_tab, factor(coef_tab$outcome_level, levels = unique(coef_tab$outcome_level)))
+      do.call(rbind, lapply(blocks, insert_reference))
     } else {
-      coef_tab <- rbind(ref_row, coef_tab)
+      insert_reference(coef_tab)
     }
   }
 
@@ -248,8 +223,8 @@
 }
 
 .react_extract_predictor_rows <- function(fit, predictor, ref_level = NULL, include_intercept = TRUE,
-                                          level_order = NULL) {
-  coef_tab <- .react_build_coef_table(fit, ref_level = NULL, dp = NULL)
+                                          level_order = NULL, measure = NULL) {
+  coef_tab <- .react_build_coef_table(fit, ref_level = NULL, dp = NULL, measure = measure)
   if (!nrow(coef_tab)) return(coef_tab)
 
   model_frame <- tryCatch(stats::model.frame(fit), error = function(e) NULL)
@@ -271,57 +246,59 @@
     predictor %in% names(model_frame) &&
     is.factor(model_frame[[predictor]]) &&
     !is.ordered(model_frame[[predictor]])
-
-  out_parts <- list()
-
-  if (isTRUE(include_intercept) && any(coef_tab$is_intercept)) {
-    intercept_row <- coef_tab[coef_tab$is_intercept, , drop = FALSE]
-    intercept_row$Level <- "(Intercept)"
-    intercept_row$row_order <- 0L
-    out_parts[[length(out_parts) + 1L]] <- intercept_row
-  }
-
-  predictor_tab <- coef_tab[predictor_rows, , drop = FALSE]
-
   if (is_categorical) {
     predictor_ref <- .react_reference_level(model_frame[[predictor]], ref_level = ref_level)
     # level_order is the predictor's full level set, so a level absent from this model
     # does not shift the rows of the levels after it.
     lvls <- if (is.null(level_order)) levels(model_frame[[predictor]]) else level_order
-    ref_row <- data.frame(
-      Level = paste0(predictor_ref, " [reference]"),
-      term_raw = NA_character_,
-      OR = NA_real_,
-      Lower = NA_real_,
-      Upper = NA_real_,
-      P_value = NA_real_,
-      is_reference = TRUE,
-      is_intercept = FALSE,
-      model_family = unique(coef_tab$model_family)[1],
-      row_order = 1L,
-      stringsAsFactors = FALSE
-    )
-    out_parts[[length(out_parts) + 1L]] <- ref_row
-
     term_label <- if (!is.null(term_labels) && !is.na(pred_term_id)) term_labels[[pred_term_id]] else predictor
     term_pattern <- paste0("^", .react_escape_regex(term_label))
-    predictor_tab$Level <- sub(term_pattern, "", predictor_tab$term_raw)
-    predictor_tab$Level[predictor_tab$Level == ""] <- predictor_tab$term_raw[predictor_tab$Level == ""]
-    predictor_tab$row_order <- match(predictor_tab$Level, setdiff(lvls, predictor_ref)) + 1L
-  } else {
-    if (nrow(predictor_tab) == 1L) {
-      predictor_tab$Level <- predictor
-      predictor_tab$row_order <- 1L
-    } else if (nrow(predictor_tab)) {
-      predictor_tab$Level <- predictor_tab$term_raw
-      predictor_tab$row_order <- seq_len(nrow(predictor_tab)) + if (isTRUE(include_intercept)) 0L else 1L
-    }
   }
 
-  if (nrow(predictor_tab)) {
-    predictor_tab$is_reference <- FALSE
-    predictor_tab$is_intercept <- FALSE
-    out_parts[[length(out_parts) + 1L]] <- predictor_tab
+  # Multinomial models have one block of rows per non-reference outcome level; offsetting
+  # row_order keeps each block together.
+  blocks <- if ("outcome_level" %in% names(coef_tab)) unique(coef_tab$outcome_level) else NA_character_
+  out_parts <- list()
+  for (b in seq_along(blocks)) {
+    in_block <- if (is.na(blocks[b])) rep(TRUE, nrow(coef_tab)) else coef_tab$outcome_level == blocks[b]
+    order_offset <- (b - 1L) * 100000L
+
+    if (isTRUE(include_intercept) && any(coef_tab$is_intercept & in_block)) {
+      intercept_row <- coef_tab[coef_tab$is_intercept & in_block, , drop = FALSE]
+      intercept_row$Level <- "(Intercept)"
+      intercept_row$row_order <- order_offset
+      out_parts[[length(out_parts) + 1L]] <- intercept_row
+    }
+
+    predictor_tab <- coef_tab[predictor_rows & in_block, , drop = FALSE]
+
+    if (is_categorical) {
+      ref_row <- coef_tab[which(in_block)[1], , drop = FALSE]
+      ref_row$Level <- paste0(predictor_ref, " [reference]")
+      ref_row$term_raw <- NA_character_
+      ref_row[c("OR", "Lower", "Upper", "P_value")] <- NA_real_
+      ref_row$is_reference <- TRUE
+      ref_row$is_intercept <- FALSE
+      ref_row$row_order <- order_offset + 1L
+      out_parts[[length(out_parts) + 1L]] <- ref_row
+
+      predictor_tab$Level <- sub(term_pattern, "", predictor_tab$term_raw)
+      predictor_tab$Level[predictor_tab$Level == ""] <- predictor_tab$term_raw[predictor_tab$Level == ""]
+      predictor_tab$row_order <- order_offset + match(predictor_tab$Level, setdiff(lvls, predictor_ref)) + 1L
+    } else if (nrow(predictor_tab) == 1L) {
+      predictor_tab$Level <- predictor
+      predictor_tab$row_order <- order_offset + 1L
+    } else if (nrow(predictor_tab)) {
+      predictor_tab$Level <- predictor_tab$term_raw
+      predictor_tab$row_order <- order_offset + seq_len(nrow(predictor_tab)) +
+        if (isTRUE(include_intercept)) 0L else 1L
+    }
+
+    if (nrow(predictor_tab)) {
+      predictor_tab$is_reference <- FALSE
+      predictor_tab$is_intercept <- FALSE
+      out_parts[[length(out_parts) + 1L]] <- predictor_tab
+    }
   }
 
   if (!length(out_parts)) return(.react_empty_coef_table())
@@ -344,14 +321,17 @@
   out
 }
 
+# Marginal risk differences (measure = "RD") or risk ratios ("RR") for one stage's model,
+# in the long layout of the coefficient rows. Only binary-outcome GLMs qualify.
 .react_extract_rd_rows <- function(stage_meta, predictor, n_sim = 100, dp = 3,
-                                   ci_method = "delta") {
-  if (is.null(stage_meta$fit)) return(data.frame())
-  if (!identical(stage_meta$model_family, "binomial")) return(data.frame())
+                                   ci_method = "delta", measure = "RD") {
+  if (is.null(stage_meta$fit) || !inherits(stage_meta$fit, "glm")) return(data.frame())
+  if (!isTRUE(stage_meta$binary)) return(data.frame())
 
-  rd_tab <- safe_makeRDTable(
+  rd_tab <- .react_safe_marginal_table(
     mod = stage_meta$fit,
     variable_name = predictor,
+    measure = measure,
     ref_level = stage_meta$ref_level,
     dp = dp,
     data = stage_meta$data,
@@ -385,12 +365,12 @@
   rd_tab$model_family <- stage_meta$model_family
   rd_tab$model <- stage_meta$model
   rd_tab$stage_id <- stage_meta$stage_id
-  rd_tab$wide_col <- sub("_OR$", "_RD", stage_meta$wide_col)
+  rd_tab$wide_col <- sub("_OR$", paste0("_", measure), stage_meta$wide_col)
   rd_tab$adjustment <- stage_meta$adjustment
   rd_tab$adjusted_vars <- paste(stage_meta$adjusted_vars, collapse = "+")
   rd_tab$Nobs_in_model <- nrow(stage_meta$data)
 
-  rd_tab[, c("Level", "term_raw", "RD", "Lower", "Upper", "P_value",
+  rd_tab[, c("Level", "term_raw", measure, "Lower", "Upper", "P_value",
              "is_reference", "is_intercept", "model_family", "row_order",
              "model", "stage_id", "wide_col", "adjustment",
              "adjusted_vars", "Nobs_in_model"), drop = FALSE]
@@ -401,7 +381,7 @@
   vcov_ok <- FALSE
   if (!is.null(fit_obj)) {
     vcov_ok <- tryCatch({
-      vc <- stats::vcov(fit_obj)
+      vc <- .react_vcov(fit_obj)
       !(is.null(vc) || anyNA(vc))
     }, error = function(e) FALSE)
   }
@@ -437,12 +417,16 @@
                                  sample_strategy = c("common_per_predictor", "per_model"),
                                  glm_control = stats::glm.control(maxit = 50),
                                  include_intercept = TRUE,
-                                 ref_level = NULL) {
+                                 ref_level = NULL,
+                                 family = "auto",
+                                 offset = NULL) {
   sample_strategy <- match.arg(sample_strategy)
-  model_family <- .react_detect_outcome_family(data[[outcome]], outcome = outcome)
+  spec <- .react_resolve_family(data[[outcome]], family = family, outcome = outcome)
+  .react_check_offset(offset, spec, data)
+  data[[outcome]] <- .react_code_outcome(data[[outcome]], spec)
 
   used_adjusters <- unique(unlist(lapply(stage_specs, `[[`, "adjusted_vars"), use.names = FALSE))
-  common_vars <- unique(c(outcome, predictor, used_adjusters))
+  common_vars <- unique(c(outcome, predictor, used_adjusters, offset))
 
   common_data <- NULL
   if (identical(sample_strategy, "common_per_predictor")) {
@@ -474,7 +458,7 @@
 
   for (i in seq_along(stage_specs)) {
     stage <- stage_specs[[i]]
-    stage_vars <- unique(c(outcome, predictor, stage$adjusted_vars))
+    stage_vars <- unique(c(outcome, predictor, stage$adjusted_vars, offset))
     stage_data <- if (identical(sample_strategy, "common_per_predictor")) {
       common_data[, stage_vars, drop = FALSE]
     } else {
@@ -490,8 +474,9 @@
         if (!is.null(predictor_ref)) {
           stage_data[[predictor]] <- stats::relevel(stage_data[[predictor]], ref = predictor_ref)
         }
-        formula <- .react_reformulate_safe(c(predictor, stage$adjusted_vars), response = outcome)
-        fit_res <- .react_fit_glm_captured(formula, data = stage_data, family = model_family, control = glm_control)
+        formula <- .react_reformulate_safe(c(predictor, stage$adjusted_vars), response = outcome,
+                                           offset = offset)
+        fit_res <- .react_fit_model_captured(formula, data = stage_data, spec = spec, control = glm_control)
       }
     }
 
@@ -504,7 +489,7 @@
       stage_data = stage_data,
       predictor = predictor,
       outcome = outcome,
-      model_family = model_family
+      model_family = spec$name
     )
 
     stage_meta[[i]] <- list(
@@ -517,7 +502,9 @@
       wide_col = stage$wide_col,
       adjustment = stage$adjustment,
       adjusted_vars = stage$adjusted_vars,
-      model_family = model_family
+      model_family = spec$name,
+      binary = spec$binary,
+      measure = spec$measure
     )
 
     if (is.null(fit_obj)) {
@@ -530,13 +517,15 @@
       predictor = predictor,
       ref_level = predictor_ref,
       include_intercept = include_intercept,
-      level_order = predictor_levels
+      level_order = predictor_levels,
+      measure = spec$measure
     )
     if (!nrow(stage_rows)) {
       rows_by_stage[[i]] <- stage_rows
       next
     }
 
+    stage_rows$model_family <- spec$name
     stage_rows$model <- stage$model
     stage_rows$stage_id <- stage$stage_id
     stage_rows$wide_col <- stage$wide_col
@@ -547,7 +536,8 @@
   }
 
   list(
-    family = model_family,
+    family = spec$name,
+    spec = spec,
     rows = dplyr::bind_rows(rows_by_stage),
     stages = stage_meta,
     diagnostics = dplyr::bind_rows(diagnostics)
@@ -573,8 +563,10 @@
     simpleround = simpleround
   )
 
+  # Multinomial rows are also identified by their outcome level.
+  id_cols <- c(intersect("outcome_level", names(long_df)), "Level")
   wide <- tidyr::pivot_wider(
-    long_df[, c("Level", "row_order", "wide_col", "value_formatted"), drop = FALSE],
+    long_df[, c(id_cols, "row_order", "wide_col", "value_formatted"), drop = FALSE],
     names_from = "wide_col",
     values_from = "value_formatted"
   )
@@ -587,14 +579,14 @@
   if (!is.null(wide_cols)) {
     wide_cols <- unique(wide_cols)
     for (col in setdiff(wide_cols, names(wide))) wide[[col]] <- NA_character_
-    wide <- wide[, c("Level", wide_cols, setdiff(names(wide), c("Level", wide_cols))), drop = FALSE]
+    wide <- wide[, c(id_cols, wide_cols, setdiff(names(wide), c(id_cols, wide_cols))), drop = FALSE]
   }
 
   if (isTRUE(include_nobs)) {
     nobs_vals <- unique(long_df$Nobs_in_model)
     if (length(nobs_vals) == 1L && !is.na(nobs_vals)) {
       wide$Nobs_in_model <- nobs_vals
-      wide <- wide[, c("Level", "Nobs_in_model", setdiff(names(wide), c("Level", "Nobs_in_model"))), drop = FALSE]
+      wide <- wide[, c(id_cols, "Nobs_in_model", setdiff(names(wide), c(id_cols, "Nobs_in_model"))), drop = FALSE]
     }
   }
 

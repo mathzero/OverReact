@@ -124,19 +124,36 @@ See [the table documentation](man/tableOne.Rd) and
 | Function | Purpose and output |
 | --- | --- |
 | `ModelMakerMulti()` | Fit crude and cumulatively adjusted models for several predictors. Returns formatted `df_output`, numeric `plot_output` and `diagnostics`. |
-| `ModelMakerMultiRD()` | Fit several predictors using cumulative or named adjustment sets, with optional risk differences, parallel execution, retries and disk checkpoints. Returns separate coefficient and risk-difference outputs plus diagnostics. |
+| `ModelMakerMultiRD()` | Fit several predictors using cumulative or named adjustment sets and any supported `family`, with optional marginal risk differences and risk ratios, parallel execution, retries and disk checkpoints. Returns separate coefficient, risk-difference and risk-ratio outputs plus diagnostics. |
 | `modelMakerSequential()` | Fit one predictor with sequential adjustment. Returns `model_df`, `model_df_predictorORs_only`, `crude_model_output`, `adj_model_outputs` and diagnostics. |
-| `modelMakerSequentialRD()` | Fit one predictor with cumulative adjustment and optional risk differences. Returns separate OR and RD tables, crude and adjusted results, diagnostics and sample counts. |
-| `modelMakerAdjustedSetsRD()` | Fit one predictor using named `adj_sets`. Returns `model_df_ORs`, `model_df_RDs`, `crude_model_OR`, `crude_model_RD`, `adj_or_outputs`, `adj_rd_outputs`, `diagnostics` and sample counts. |
-| `makeORTable()` | Extract coefficients, 95% normal-approximation Wald intervals and model-summary p-values from a fitted model. Binomial coefficients are exponentiated; other coefficients retain their original scale. Optional reference rows and term metadata are included; `dp = NULL` returns unrounded estimates. |
+| `modelMakerSequentialRD()` | Fit one predictor with cumulative adjustment and optional risk differences and ratios. Returns separate coefficient, RD and RR tables, crude and adjusted results, diagnostics and sample counts. |
+| `modelMakerAdjustedSetsRD()` | Fit one predictor using named `adj_sets`. Returns `model_df_ORs`, `model_df_RDs`, `model_df_RRs`, the matching `crude_model_*` and `adj_*_outputs` tables, `diagnostics`, the `family` and `measure`, and sample counts. |
+| `makeORTable()` | Extract coefficients, 95% Wald intervals and p-values from a fitted `glm`, `lm`, `gam`, `polr` or `multinom` model. Logit-link coefficients are exponentiated to odds ratios and log-link coefficients to risk or rate ratios; other links keep their original scale. The `measure` column says which (`OR`, `RR`, `IRR`, `Beta` or `Coef`). Optional reference rows and term metadata are included; `dp = NULL` returns unrounded estimates. |
 | `makeRDTable()` | Estimate marginal risk differences for a factor or numeric predictor in a binomial model, as described below. Returns `Level`, `RD`, `Lower`, `Upper` and `P_value`; intervals use the delta method, or coefficient simulation with `ci_method = "simulation"`. |
+| `makeRRTable()` | Estimate marginal risk ratios in the same way, returning `Level`, `RR`, `Lower`, `Upper` and `P_value`. |
 | `safe_makeRDTable()` | Wrap `makeRDTable()` with error capture and an explicit reference row for factor predictors. Returns `NULL` on a caught error. |
 
-The modelling wrappers select a binomial logit model when the outcome has two
-distinct non-missing values, otherwise a Gaussian identity model. Encode binary
-outcomes as 0/1, logical values or a two-level factor; other two-value codings
-(such as 1/2) and categorical outcomes with three or more levels raise an error
-before any model is fitted. Character predictors and adjusters are converted to
+### Model families
+
+The `family` argument of the modelling wrappers selects the model; each family
+reports one effect measure, and estimate columns are named after it.
+
+| `family` | Model | Measure |
+| --- | --- | --- |
+| `"binomial"` | Logistic regression | `OR` |
+| `"gaussian"` | Linear regression | `Beta` |
+| `"poisson"`, `"quasipoisson"` | Log-linear count model; `offset` names a column of exposure times, entered as `offset(log(...))` | `IRR` |
+| `"log_binomial"` | Binomial regression with a log link, started inside the parameter space | `RR` |
+| `"modified_poisson"` | Poisson regression of a binary outcome with HC0 sandwich standard errors | `RR` |
+| `"ordinal"` | Proportional-odds model (`MASS::polr()`) | `OR` |
+| `"multinomial"` | Multinomial logit (`nnet::multinom()`); one block of rows per non-reference outcome level | `OR` |
+
+`family = "auto"` (the default) chooses binomial for two distinct values,
+ordinal for an ordered factor, multinomial for another categorical outcome with
+three or more levels, and Gaussian otherwise. Encode binary outcomes as 0/1,
+logical values or a two-level factor; other two-value codings (such as 1/2), and
+outcomes that do not suit an explicitly chosen family, raise an error before any
+model is fitted. Character predictors and adjusters are converted to
 factors, and ordered factors are treated as unordered, so every level is compared
 with the reference. Unused levels are dropped within the analysis sample. The crude
 model is stage 0 and each adjusted model adds one to the stage number. Reference
@@ -159,6 +176,17 @@ models <- ModelMakerMultiRD(
 models$df_output
 models$df_output_RDs
 models$diagnostics
+
+# Risk ratios from a modified Poisson model, and marginal risk ratios.
+rr_models <- ModelMakerMultiRD(
+  dat = clinical,
+  list_of_variables_of_interest = c("vaccinated", "sex"),
+  outcome = "positive",
+  joint_adjustment_vars = "age",
+  family = "modified_poisson",
+  include_rr = TRUE,
+  ncores = 1
+)
 ```
 
 With `incremental = TRUE`, adjusters enter cumulatively in the order supplied
@@ -178,30 +206,35 @@ estimation as well as labelling.
 
 | `ModelMakerMultiRD()` element | Contents |
 | --- | --- |
-| `df_output` | Formatted coefficient or odds-ratio tables across model stages. |
-| `plot_output` | Numeric estimates, `Lower`, `Upper`, `P_value`, reference indicators, stage labels and `Nobs_in_model`. |
+| `df_output` | Formatted estimates across model stages; columns end in the family's measure (for example `crude_mod_OR`, `adj_age_IRR`). Multinomial models add an `Outcome` column. |
+| `plot_output` | Numeric estimates (in a column named after the measure), `Lower`, `Upper`, `P_value`, reference indicators, `measure`, `model_family`, stage labels and `Nobs_in_model`; multinomial models add `outcome_level`. |
 | `df_output_RDs` | Formatted risk-difference tables; `NULL` when unavailable. |
 | `plot_output_RDs` | Numeric risk differences and intervals; `NULL` when unavailable. |
+| `df_output_RRs`, `plot_output_RRs` | Formatted and numeric marginal risk ratios with `include_rr = TRUE`; `NULL` when unavailable. |
 | `diagnostics` | Stage, adjustment variables, status, errors, captured warnings, sample size, covariance validity, separation flags and attempt number. |
 
-Gaussian models are labelled `Beta` in batch plotting outputs. Some lower-level
-tables retain `OR` in column names for compatibility; consult `model_family`
-before interpreting estimates. Coefficient intervals use normal quantiles, or t
+Lower-level tables (from `makeORTable()` and the single-predictor wrappers) keep
+the estimate column name `OR` for compatibility; their `measure` column gives the
+actual measure. Coefficient intervals use normal quantiles, or t
 quantiles with the residual degrees of freedom when the model reports t tests (as
 Gaussian models do), so intervals agree with the p-values from the fitted model
 summary. Numeric outputs are unrounded; only the formatted tables are rounded.
 
-Risk differences are estimated by standardisation over the analysis sample. For
-a factor predictor, predicted risks are averaged with every observation set to
-each level and contrasted with the reference level. For a numeric predictor, the
-estimate is the average marginal effect: the mean derivative of predicted risk
-per one-unit increase. Intervals use the delta method by default;
+Marginal risk differences (`include_rd`) and risk ratios (`include_rr`) are
+estimated by standardisation over the analysis sample. For a factor predictor,
+predicted risks are averaged with every observation set to each level and
+contrasted with the reference level, as a difference or a ratio. For a numeric
+predictor, the risk difference is the average marginal effect (the mean
+derivative of predicted risk per one-unit increase), and the risk ratio is the
+proportional change in mean risk per unit, `exp(d log(mean risk) / dx)`.
+Intervals use the delta method by default, on the log scale for ratios;
 `rd_ci_method = "simulation"` instead takes the 2.5th and 97.5th percentiles of
 `n_sim` multivariate-normal coefficient draws, using a fixed seed without
 disturbing the session's random-number stream. P-values use a normal
 approximation. These are model-based associations; causal interpretation
-requires additional assumptions. Risk differences are produced only for binomial
-models; `include_rd = FALSE` disables them.
+requires additional assumptions. Marginal effects need a binary outcome (the
+binomial, log-binomial and modified Poisson families) and are skipped otherwise;
+`include_rd = FALSE` disables risk differences.
 
 `ncores = NULL` or `1` runs sequentially. Larger values request a `future`
 backend. `ModelMakerMultiRD()` can retry incomplete results with revised GLM
@@ -284,8 +317,9 @@ report.
 The descriptive table is stratified when the outcome is factor, character or
 logical, or numeric with at most `outcome_cat_unique_threshold` distinct values
 (default 6). This rule controls table layout, independently of the regression
-family. `include_rd` defaults to `FALSE`; supplying `NULL` enables automatic
-selection for binary outcomes. The report ranks associations by p-value,
+`family`, which is passed to `ModelMakerMultiRD()`. `include_rd` defaults to
+`FALSE`; supplying `NULL` enables automatic selection for binary outcomes, and
+`include_rr = TRUE` adds marginal risk ratios. The report ranks associations by p-value,
 selecting one category per predictor from that predictor's most-adjusted model;
 a predictor that is also a covariate is not adjusted for itself. Treat this
 ranking as exploratory, particularly when adjustment sets are not nested.
@@ -295,7 +329,7 @@ See [the driver](R/automated_analysis.R).
 
 | Function | Purpose and output |
 | --- | --- |
-| `plotReactForest()` | Create a forest plot from batch-model results, numeric plotting data, an `lm`/`glm`/`gam` fit, or a named list of fits. Supports `effect = "OR"`, `"Beta"` or `"RD"`, adjustment labels, reference rows and variable selection. |
+| `plotReactForest()` | Create a forest plot from batch-model results, numeric plotting data, an `lm`/`glm`/`gam` fit, or a named list of fits. Supports `effect = "OR"`, `"RR"`, `"IRR"`, `"Beta"` or `"RD"`, adjustment labels, reference rows and variable selection. |
 | `plotReactVIF()` | Plot externally supplied variance inflation factors by adjustment stage. Requires `Variable`, `adjustment` and `vif`; batch model wrappers do not currently return VIFs. |
 | `theme_react()` | Apply the REACT theme with white backgrounds, small text and configurable base size, facet and title styling; further theme elements can be passed through `...`. |
 | `theme_mw()` | Apply a related theme with panel borders, ticks and configurable grids and legend placement; a numeric `legend.position` places the legend inside the panel. |
@@ -321,9 +355,11 @@ ggplot2::ggplot(clinical, ggplot2::aes(x = age, fill = sex)) +
   theme_react()
 ```
 
-Forest plots use a logarithmic odds-ratio scale with null value 1, and linear
-coefficient or risk-difference scales with null value 0. `xrange` sets the
-visible odds-ratio range (default 1/4 to 16); estimates or interval bounds beyond
+Forest plots use a logarithmic scale with null value 1 for ratios (OR, RR,
+IRR), and linear coefficient or risk-difference scales with null value 0. For a
+batch result, `effect = "RR"` plots the marginal risk ratios when they were
+requested, and multinomial rows are labelled with their outcome level. `xrange`
+sets the visible ratio range (default 1/4 to 16); estimates or interval bounds beyond
 it are clipped at the panel edge, with a warning. Pass numeric
 `plot_output` data rather than formatted table strings.
 
