@@ -16,9 +16,9 @@ remotes::install_github("mathzero/OverReact", ref = "dev")
 library(OverReact)
 ```
 
-Specify analysis data, outcomes and adjustment variables explicitly. Several
-legacy defaults refer to REACT-specific objects, variable names or assay
-characteristics.
+Specify analysis data, outcomes and adjustment variables explicitly. Data
+arguments have no defaults; some outcome and adjuster defaults still use
+REACT-specific variable names.
 
 ## Analytical workflow
 
@@ -134,9 +134,14 @@ See [the table documentation](man/tableOne.Rd) and
 
 The modelling wrappers select a binomial logit model when the outcome has two
 distinct non-missing values, otherwise a Gaussian identity model. Encode binary
-outcomes as 0/1, logical values or a two-level factor. Multinomial regression is
-not implemented. Character predictors and adjusters are converted to factors;
-unused levels are dropped within the analysis sample.
+outcomes as 0/1, logical values or a two-level factor; other two-value codings
+(such as 1/2) and categorical outcomes with three or more levels raise an error
+before any model is fitted. Character predictors and adjusters are converted to
+factors, and ordered factors are treated as unordered, so every level is compared
+with the reference. Unused levels are dropped within the analysis sample. The crude
+model is stage 0 and each adjusted model adds one to the stage number. Reference
+rows show `-` in the formatted tables, and every stage keeps its column even when
+its model cannot be fitted.
 
 ```r
 models <- ModelMakerMultiRD(
@@ -181,9 +186,10 @@ estimation as well as labelling.
 
 Gaussian models are labelled `Beta` in batch plotting outputs. Some lower-level
 tables retain `OR` in column names for compatibility; consult `model_family`
-before interpreting estimates. Coefficient intervals use the normal
-approximation; p-values are taken from the fitted model summary. Numeric outputs
-are unrounded; only the formatted tables are rounded.
+before interpreting estimates. Coefficient intervals use normal quantiles, or t
+quantiles with the residual degrees of freedom when the model reports t tests (as
+Gaussian models do), so intervals agree with the p-values from the fitted model
+summary. Numeric outputs are unrounded; only the formatted tables are rounded.
 
 Risk differences are estimated by standardisation over the analysis sample. For
 a factor predictor, predicted risks are averaged with every observation set to
@@ -214,10 +220,11 @@ and are recomputed once.
 | `check_perfect_separation()` | Flag zero cells in a categorical predictor × binary outcome table. Returns a message or `NULL`; this is a screening heuristic, not a general separation diagnostic. |
 | `build_cumulative_sets()` | Convert an ordered vector of adjusters to a named list of cumulative sets. |
 | `compute_level_order()` | Return factor levels with a labelled reference first; return `NULL` for non-factors. |
-| `get_pretty_name()` | Resolve a display label from `options(modelmaker.name_map = ...)`, a variable's `label` attribute, or automatic title casing; an optional `name_fun` transforms the fallback label. |
+| `get_pretty_name()` | Resolve a display label from `name_map`, `options(modelmaker.name_map = ...)`, a variable's `label` attribute, or automatic title casing; an optional `name_fun` transforms the fallback label. |
 
-`cov_name_list` is retained in batch-model signatures but currently does not
-apply labels. Use `modelmaker.name_map`, column labels or `name_fun` instead.
+`cov_name_list`, a named vector or list, sets display labels in the batch
+wrappers. Variables whose labels coincide (for example `age_grp` and `age grp`)
+get their raw names appended, so their results are never merged.
 See [the model wrappers](R/bulk_run_models_ORs_RDs.R) and
 [coefficient-only interface](R/make_OR_tables.R).
 
@@ -392,7 +399,7 @@ the current descriptive and modelling interfaces.
 | `crossTabMulti()` | Combine legacy categorical and continuous cross-tabs into `Variable`/`Category` rows with a `Pooled` column. `rowvar_list` is deprecated in favour of `rowvars`; continuous weights are not forwarded. |
 | `xtabPercentageExtractor()` | Extract text or numeric values between configurable regular-expression delimiters, commonly percentages or interval bounds. |
 | `makeXtabPlottable()` | Intended to extract percentages and optionally pivot a cross-tab to long format. The current implementation references the undefined helper `xtab_percentage_extractor` and requires repair before use. |
-| `GAMModelMaker()` | Legacy sequential binomial GAM wrapper with optional smooth adjustment terms. The current implementation uses an ambient `dat` object and an output schema incompatible with the current coefficient extractor. |
+| `GAMModelMaker()` | Legacy sequential binomial GAM wrapper; `spline_vars` indexes the adjusters entered as smooth terms. Returns formatted `model_df` columns per stage and the coefficient tables. |
 | `naReporter()` | Intended to audit REACT missing codes (`-91`, `-92`, `-77`, `-99`) and ordinary missingness. The current implementation constructs a report but returns `NULL`. |
 
 See [legacy cross-tabs](R/make_cross_tabs.R) and

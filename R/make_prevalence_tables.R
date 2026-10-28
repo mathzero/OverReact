@@ -50,11 +50,11 @@
 #'
 #' @return A named list of prevalence tables, or a single bound data frame when
 #'   \code{output_list = FALSE}.
-makeTablesNew <- function(dat = dfRes,
+makeTablesNew <- function(dat,
                           result_var = "res",
                           pos_val = "1",
                           neg_val = "0",
-                          covariates = covs, # character vector naming variables to create tables for
+                          covariates, # character vector naming variables to create tables for
                           cov_name_list,
                           sens = 1,
                           spec = 1,
@@ -191,11 +191,11 @@ makeTablesNew <- function(dat = dfRes,
 
 # Stratified tables -------------------------------------------------------
 
-stratifiedTables <- function(dat = dfRes,
+stratifiedTables <- function(dat,
                              result_var = "res",
                              pos_val = "1",
                              neg_val = "0",
-                             covariates = covs, # character vector naming variables to create tables for
+                             covariates, # character vector naming variables to create tables for
                              cov_name_list,
                              strat_var,
                              sens = 1,

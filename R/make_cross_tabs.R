@@ -49,7 +49,7 @@ comma_sep <- function(x) {
 
 
 # Simple cross-tab function, with %s
-crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
+crossTab <- function(dat, rowvar, colvar, rowvar_levels = NULL,
                      colvar_levels = NULL, confint =T,include_percentages=T,
                      rowwise_precentages = T, weights=NULL, comma_thousands = F,
                      statistical_test = F){
@@ -128,7 +128,7 @@ crossTab <- function(dat = dfRes, rowvar, colvar, rowvar_levels = NULL,
 
 
 # Function to do x-tab for contiuous variables
-crossTabContinuous <- function(dat = dfRes, rowvar, colvar=NULL, weights = NULL,
+crossTabContinuous <- function(dat, rowvar, colvar=NULL, weights = NULL,
                                summary_stat="mean",
                                statistical_test=F){
 

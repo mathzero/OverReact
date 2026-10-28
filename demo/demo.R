@@ -83,7 +83,7 @@ df_output_RDs
 
 forest_plot_mm <- plotReactForest(
   mymods,
-  adjustment_numbers = c(0, 1, 3),
+  adjustment_numbers = c(0, 1, 6),
   adjustment_descriptions = c("Crude", "+ X1", "Full model"),
   title = "Forest plot from ModelMakerMulti() output"
 )
@@ -116,9 +116,9 @@ df_output_RDs_noninc=mymods_non_inc$df_output_RDs
 
 # Create table one --------------------------------------------------------
 
-rowvar_list=c("x1","x2","x3","x4","abcat","x3","x4","xMessedUp")
+rowvar_list=c("x1","x2","x3","x4","abcat","xMessedUp")
 colvar = "cat"
-rowvar_names=c("X1","X2","X3","X4","ABCAT!","X3","X4",NA)
+rowvar_names=c("X1","X2","X3","X4","ABCAT!",NA)
 rowvar_names <- as.list(rowvar_names)
 names(rowvar_names) <- rowvar_list
 options(scipen = 999)

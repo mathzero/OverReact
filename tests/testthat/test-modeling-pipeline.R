@@ -76,7 +76,7 @@ test_that("ModelMakerMulti preserves self-adjustment stages and numbering", {
   expect_false(is.na(x1_row$plus_x1))
   expect_equal(x1_row$plus_x1, x1_row$crude_mod_OR)
   expect_equal(x1_plot$stage_id, c("crude", "plus_x1", "plus_x2"))
-  expect_equal(x1_plot$adjustment, c(1L, 2L, 3L))
+  expect_equal(x1_plot$adjustment, c(0L, 1L, 2L))
   expect_equal(
     x1_plot$OR[x1_plot$stage_id == "plus_x1"],
     x1_plot$OR[x1_plot$stage_id == "crude"]
@@ -157,7 +157,7 @@ test_that("legacy and RD wrappers agree on OR outputs when RD is disabled", {
     )
   )$plot_output
 
-  legacy$adj_index <- legacy$adjustment - 1L
+  legacy$adj_index <- legacy$adjustment
   rd$adj_index <- rd$adjustment
 
   cols <- c("Variable", "Category", "adj_index", "OR", "Lower", "Upper", "P_value")

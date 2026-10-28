@@ -28,13 +28,31 @@
   if (length(non_missing) < 2L) {
     stop("Less than two unique non-missing values found for outcome '", outcome, "'.")
   }
-  if (length(non_missing) == 2L) "binomial" else "gaussian"
+  categorical <- is.factor(y) || is.character(y) || is.logical(y)
+  if (length(non_missing) == 2L) {
+    # glm() needs a binary outcome as 0/1, logical or a two-level factor; other codings
+    # (such as 1/2) would otherwise fail inside every model and leave empty results.
+    if (!categorical && !all(non_missing %in% c(0, 1))) {
+      stop("Binary outcome '", outcome, "' is coded ",
+           paste(sort(non_missing), collapse = "/"),
+           "; recode it as 0/1, logical or a two-level factor.")
+    }
+    return("binomial")
+  }
+  if (categorical) {
+    stop("Outcome '", outcome, "' has ", length(non_missing), " categories; ",
+         "only binary and continuous outcomes are supported.")
+  }
+  "gaussian"
 }
 
 .react_prepare_analysis_frame <- function(data, vars, drop_missing = TRUE) {
   out <- as.data.frame(data[, vars, drop = FALSE], stringsAsFactors = FALSE)
   for (nm in names(out)) {
     if (is.character(out[[nm]])) out[[nm]] <- factor(out[[nm]])
+    # Ordered factors get treatment contrasts like other factors, so tables report one
+    # estimate per level against the reference rather than polynomial trend terms.
+    if (is.ordered(out[[nm]])) out[[nm]] <- factor(out[[nm]], ordered = FALSE)
   }
   if (isTRUE(drop_missing)) {
     keep <- stats::complete.cases(out)
@@ -48,7 +66,7 @@
 
 .react_build_sequential_stage_specs <- function(adjusters,
                                                 predictor,
-                                                crude_adjustment = 1L,
+                                                crude_adjustment = 0L,
                                                 crude_wide_col = "crude_mod_OR") {
   stage_specs <- vector("list", length(adjusters) + 1L)
   stage_specs[[1]] <- list(
@@ -131,14 +149,21 @@
   }
   exponentiate <- identical(model_family, "binomial")
 
+  # Intervals use t quantiles when the model reports t tests (estimated dispersion, as in
+  # Gaussian models), so they agree with the p-values; otherwise normal quantiles.
+  critical_value <- function(p_col) {
+    if (grepl("|t|", p_col, fixed = TRUE)) stats::qt(0.975, df = stats::df.residual(mod)) else stats::qnorm(0.975)
+  }
   if (inherits(mod, "gam")) {
     coef_tab <- tryCatch({
       summ <- mgcv::summary.gam(mod)
       out <- as.data.frame(summ$p.table, stringsAsFactors = FALSE)
+      p_col <- grep("^Pr\\(", names(out), value = TRUE)[1]
+      crit <- critical_value(p_col)
       out$term_raw <- rownames(out)
-      out$Lower <- out$Estimate - stats::qnorm(0.975) * out$`Std. Error`
-      out$Upper <- out$Estimate + stats::qnorm(0.975) * out$`Std. Error`
-      out <- out[, c("term_raw", "Estimate", "Lower", "Upper", "Pr(>|z|)"), drop = FALSE]
+      out$Lower <- out$Estimate - crit * out$`Std. Error`
+      out$Upper <- out$Estimate + crit * out$`Std. Error`
+      out <- out[, c("term_raw", "Estimate", "Lower", "Upper", p_col), drop = FALSE]
       names(out) <- c("term_raw", "OR", "Lower", "Upper", "P_value")
       out
     }, error = function(e) NULL)
@@ -148,11 +173,12 @@
       se_col <- grep("Std\\.|Std\\. Error|Standard Error", colnames(coef_summ), ignore.case = TRUE)[1]
       p_col <- grep("Pr\\(", colnames(coef_summ))[1]
       if (is.na(se_col) || is.na(p_col)) stop("Could not locate coefficient summary columns.")
+      crit <- critical_value(colnames(coef_summ)[p_col])
       out <- data.frame(
         term_raw = rownames(coef_summ),
         OR = as.numeric(coef_summ[, 1]),
-        Lower = as.numeric(coef_summ[, 1] - stats::qnorm(0.975) * coef_summ[, se_col]),
-        Upper = as.numeric(coef_summ[, 1] + stats::qnorm(0.975) * coef_summ[, se_col]),
+        Lower = as.numeric(coef_summ[, 1] - crit * coef_summ[, se_col]),
+        Upper = as.numeric(coef_summ[, 1] + crit * coef_summ[, se_col]),
         P_value = as.numeric(coef_summ[, p_col]),
         stringsAsFactors = FALSE
       )
@@ -307,12 +333,15 @@
 }
 
 .react_format_effect_ci <- function(effect, lower, upper, sf = 2, format = "f", simpleround = FALSE) {
-  sprintf(
+  out <- sprintf(
     "%s (%s,%s)",
     specifyDecimal(effect, sf, format = format, simpleround = simpleround),
     specifyDecimal(lower, sf, format = format, simpleround = simpleround),
     specifyDecimal(upper, sf, format = format, simpleround = simpleround)
   )
+  # Reference rows and failed fits have no estimate.
+  out[is.na(effect)] <- "-"
+  out
 }
 
 .react_extract_rd_rows <- function(stage_meta, predictor, n_sim = 100, dp = 3,
@@ -530,7 +559,8 @@
                                   sf = 2,
                                   format = "f",
                                   simpleround = FALSE,
-                                  include_nobs = FALSE) {
+                                  include_nobs = FALSE,
+                                  wide_cols = NULL) {
   if (is.null(long_df) || !nrow(long_df)) return(data.frame())
 
   long_df <- long_df[order(long_df$row_order, long_df$adjustment, na.last = TRUE), , drop = FALSE]
@@ -551,6 +581,14 @@
   wide <- as.data.frame(wide, stringsAsFactors = FALSE)
   wide <- wide[order(wide$row_order), , drop = FALSE]
   wide$row_order <- NULL
+
+  # Keep a column for every stage, in stage order, even when a stage produced no
+  # estimates (for example a failed fit), so tables have a stable layout.
+  if (!is.null(wide_cols)) {
+    wide_cols <- unique(wide_cols)
+    for (col in setdiff(wide_cols, names(wide))) wide[[col]] <- NA_character_
+    wide <- wide[, c("Level", wide_cols, setdiff(names(wide), c("Level", wide_cols))), drop = FALSE]
+  }
 
   if (isTRUE(include_nobs)) {
     nobs_vals <- unique(long_df$Nobs_in_model)

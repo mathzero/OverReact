@@ -11,31 +11,6 @@
 #  - Model convergence controls
 # -----------------------------------------------------------------------------
 
-#
-# # =============================================================================
-# # 1. Helper: pretty variable names --------------------------------------------
-# # =============================================================================
-# get_pretty_name <- function(var, dat, name_fun = NULL, auto_pretty = TRUE) {
-#   if (is.null(var) || !is.character(var) || length(var) != 1) {
-#     return(as.character(var))
-#   }
-#   dict <- getOption("modelmaker.name_map")
-#   if (!is.null(dict) && var %in% names(dict)) return(dict[[var]])
-#   if (!is.null(dat) && var %in% names(dat)) {
-#     lbl <- attr(dat[[var]], "label", exact = TRUE)
-#     if (!is.null(lbl) && is.character(lbl) && length(lbl) == 1) return(lbl)
-#   }
-#   if (auto_pretty) {
-#     var <- gsub("_", " ", var)
-#     var <- tools::toTitleCase(var)
-#   }
-#   if (is.function(name_fun)) {
-#     var <- tryCatch(name_fun(var), error = function(e) var)
-#   }
-#   var
-# }
-
-
 # =============================================================================
 # NEW HELPER: Validate factor levels after subsetting -------------------------
 # =============================================================================
@@ -231,7 +206,7 @@ makeRDTable <- function(mod, variable_name, ref_level = NULL, dp = 4,
 # 5. modelMakerSequentialRD() - SEPARATE OR / RD OUTPUTS
 # ---------------------------------------------------------------------------
 modelMakerSequentialRD <- function(variable_name,
-                                   data                    = dfRes,
+                                   data,
                                    sf                      = 2,
                                    format                  = "f",
                                    simpleround             = FALSE,
@@ -289,182 +264,6 @@ modelMakerSequentialRD <- function(variable_name,
   out
 }
 
-
-
-
-# =========================================================
-# Memory- and compute-efficient adjusted risk-difference
-# (and average marginal effect) table builder
-# =========================================================
-#
-# # =========================================================
-# # Memory- and compute-efficient adjusted risk-difference
-# # (and average marginal effect) table builder
-# # =========================================================
-# makeRDTable_fast2 <- function(mod, variable_name, ref_level = NULL, dp = 4,
-#                               data = NULL, n_sim = 100, seed = 1,
-#                               chunk_size = 5e4, sparse = TRUE) {
-#
-#   na_tbl <- data.frame(Level   = NA_character_,
-#                        RD      = NA_real_,
-#                        Lower   = NA_real_,
-#                        Upper   = NA_real_,
-#                        P_value = NA_real_,
-#                        stringsAsFactors = FALSE)
-#
-#   if (is.null(mod) || inherits(mod, "try-error") ||
-#       mod$family$family != "binomial") return(na_tbl)
-#
-#   if (is.null(data)) data <- model.frame(mod)
-#   if (!variable_name %in% names(data)) return(na_tbl)
-#
-#   vc <- tryCatch(vcov(mod), error = function(e) NULL)
-#   if (is.null(vc) || anyNA(vc)) return(na_tbl)
-#
-#   # -- model matrix ----------------------------------------------------------
-#   if (sparse) {
-#     X_full <- Matrix::sparse.model.matrix(delete.response(terms(mod)), data)
-#   } else {
-#     X_full <- model.matrix(delete.response(terms(mod)), data)
-#   }
-#
-#   beta_hat <- coef(mod)
-#   set.seed(seed)
-#   beta_sim <- MASS::mvrnorm(n_sim, mu = beta_hat, Sigma = vc)
-#   B        <- cbind(beta_hat, t(beta_sim))          # p  x (1 + n_sim)
-#   k        <- ncol(B)                               # number of coefficient draws
-#
-#   # -- helper: mean risk (vectorised over coefficient draws) -----------------
-#   mean_risk_multi <- function(X, B) {
-#     n   <- nrow(X)
-#     idx <- split(seq_len(n), ceiling(seq_len(n) / chunk_size))
-#     out <- numeric(k)
-#     for (i in idx) {
-#       lp  <- as.matrix(X[i, , drop = FALSE] %*% B)  # chunk x k
-#       out <- out + colSums(plogis(lp))
-#     }
-#     out / n
-#   }
-#
-#   # --------------------------------------------------------------------------
-#   # 1) Categorical exposure ---------------------------------------------------
-#   # --------------------------------------------------------------------------
-#   if (is.factor(data[[variable_name]])) {
-#
-#     lvls <- levels(data[[variable_name]])
-#     if (is.null(ref_level) || !(ref_level %in% lvls)) ref_level <- lvls[1]
-#     comp_lvls <- setdiff(lvls, ref_level)
-#
-#     # locate dummy columns for the factor (excluding intercept, interactions)
-#     col_id <- grep(paste0("^", variable_name), colnames(X_full), value = TRUE)
-#
-#     # baseline (reference): zero all dummies for this factor
-#     X_ref <- X_full
-#     if (length(col_id)) X_ref[, col_id] <- 0
-#
-#     risk_ref_all <- mean_risk_multi(X_ref, B)
-#     risk_ref_hat <- risk_ref_all[1]
-#     risk_ref_sim <- risk_ref_all[-1]
-#
-#     out <- vector("list", length(comp_lvls))
-#
-#     for (j in seq_along(comp_lvls)) {
-#       lvl     <- comp_lvls[j]
-#       # column for this specific level (simple main-effect coding)
-#       lvl_col <- grep(paste0(variable_name, lvl),
-#                       colnames(X_full),
-#                       value = TRUE,
-#                       fixed = TRUE)
-#
-#       # If we don't find a unique column for the level, skip safely
-#       if (!length(lvl_col)) {
-#         out[[j]] <- data.frame(Level   = lvl,
-#                                RD      = NA_real_,
-#                                Lower   = NA_real_,
-#                                Upper   = NA_real_,
-#                                P_value = NA_real_,
-#                                stringsAsFactors = FALSE)
-#         next
-#       }
-#
-#       X_lvl <- X_ref
-#       X_lvl[, lvl_col] <- 1
-#
-#       risk_lvl_all <- mean_risk_multi(X_lvl, B)
-#       rd_hat       <- risk_lvl_all[1]  - risk_ref_hat
-#       rd_sim       <- risk_lvl_all[-1] - risk_ref_sim
-#
-#       ci <- stats::quantile(rd_sim, c(.025, .975), names = FALSE, type = 7)
-#       se <- stats::sd(rd_sim)
-#       p  <- 2 * (1 - stats::pnorm(abs(rd_hat / se)))
-#
-#       out[[j]] <- data.frame(Level   = lvl,
-#                              RD      = round(rd_hat, dp),
-#                              Lower   = round(ci[1], dp),
-#                              Upper   = round(ci[2], dp),
-#                              P_value = round(p,    5),
-#                              stringsAsFactors = FALSE)
-#     }
-#
-#     comp_tab <- do.call(rbind, out)
-#
-#     # ---- insert an empty [reference] row to mirror makeORTable ------------
-#     ref_row <- data.frame(Level   = paste0(ref_level, " [reference]"),
-#                           RD      = NA_real_,
-#                           Lower   = NA_real_,
-#                           Upper   = NA_real_,
-#                           P_value = NA_real_,
-#                           stringsAsFactors = FALSE)
-#
-#     tab <- if (is.null(comp_tab) || nrow(comp_tab) == 0) {
-#       ref_row
-#     } else {
-#       rbind(ref_row, comp_tab)
-#     }
-#
-#     rownames(tab) <- NULL
-#     return(tab)
-#   }
-#
-#   # --------------------------------------------------------------------------
-#   # 2) Numeric / ordered exposure --------------------------------------------
-#   # --------------------------------------------------------------------------
-#   if (is.numeric(data[[variable_name]]) || is.ordered(data[[variable_name]])) {
-#
-#     col_id <- grep(paste0("^", variable_name), colnames(X_full))
-#     if (!length(col_id)) return(na_tbl)
-#
-#     n   <- nrow(X_full)
-#     idx <- split(seq_len(n), ceiling(seq_len(n) / chunk_size))
-#     out <- numeric(k)          # will hold sums -> divide by n later
-#
-#     for (i in idx) {
-#       lp   <- as.matrix(X_full[i, , drop = FALSE] %*% B)       # chunk x k
-#       p    <- plogis(lp)
-#       w    <- p * (1 - p)
-#       xcol <- X_full[i, col_id]
-#       out  <- out + colSums(w * matrix(xcol, nrow = length(xcol), ncol = k))
-#     }
-#     ame_all <- out / n
-#     ame_hat <- ame_all[1]
-#     ame_sim <- ame_all[-1]
-#
-#     ci <- stats::quantile(ame_sim, c(.025, .975), names = FALSE, type = 7)
-#     se <- stats::sd(ame_sim)
-#     p  <- 2 * (1 - stats::pnorm(abs(ame_hat / se)))
-#
-#     tab <- data.frame(Level   = variable_name,
-#                       RD      = round(ame_hat, dp),
-#                       Lower   = round(ci[1],  dp),
-#                       Upper   = round(ci[2],  dp),
-#                       P_value = round(p,      5),
-#                       stringsAsFactors = FALSE)
-#     rownames(tab) <- NULL
-#     return(tab)
-#   }
-#
-#   na_tbl
-# }
 
 
 
@@ -660,20 +459,25 @@ compute_level_order <- function(x, ref_level = NULL) {
   isTRUE(ok) && dir.exists(path)
 }
 
-.atomic_write_csv <- function(df, path) {
-  tmp <- paste0(path, ".tmp-", Sys.getpid(), "-", sprintf("%08x", sample.int(.Machine$integer.max, 1)))
+# Write to a temporary file beside `path`, then move it into place, so readers never see
+# a partly written file. tempfile() names do not touch the session's RNG stream.
+.atomic_write <- function(path, write) {
+  tmp <- tempfile(pattern = paste0(basename(path), ".tmp-"), tmpdir = dirname(path))
   on.exit({ if (file.exists(tmp)) unlink(tmp) }, add = TRUE)
-  if (requireNamespace("readr", quietly = TRUE)) readr::write_csv(df, tmp) else utils::write.csv(df, tmp, row.names = FALSE)
+  write(tmp)
+  if (file.rename(tmp, path)) return(invisible(TRUE))
+  # Some platforms will not rename over an existing file.
   if (file.exists(path)) unlink(path)
-  file.rename(tmp, path)
+  if (!file.rename(tmp, path)) stop("Could not write '", path, "'.")
+  invisible(TRUE)
+}
+
+.atomic_write_csv <- function(df, path) {
+  .atomic_write(path, function(tmp) readr::write_csv(df, tmp))
 }
 
 .atomic_write_rds <- function(obj, path) {
-  tmp <- paste0(path, ".tmp-", Sys.getpid(), "-", sprintf("%08x", sample.int(.Machine$integer.max, 1)))
-  on.exit({ if (file.exists(tmp)) unlink(tmp) }, add = TRUE)
-  saveRDS(obj, file = tmp)
-  if (file.exists(path)) unlink(path)
-  file.rename(tmp, path)
+  .atomic_write(path, function(tmp) saveRDS(obj, file = tmp))
 }
 
 .robust_read_csv <- function(path) {
@@ -803,15 +607,6 @@ compute_level_order <- function(x, ref_level = NULL) {
   )
 }
 
-# =========================
-# Diagnostics-aware adjusted-sets runner
-# =========================
-
-.run_glm_captured <- function(fml, data, family, control) {
-  .react_fit_glm_captured(fml, data = data, family = family, control = control)
-}
-
-
 # =============================================================================
 
 # modelMakerAdjustedSetsRD(): ensures level-order & clean plot lis --------
@@ -820,7 +615,7 @@ compute_level_order <- function(x, ref_level = NULL) {
 # Diagnostics-aware adjusted-sets runner - now keeps reference in plots
 # ======================================================================
 modelMakerAdjustedSetsRD <- function(variable_name,
-                                     data                    = dfRes,
+                                     data,
                                      sf                      = 2,
                                      format                  = "f",
                                      simpleround             = FALSE,
@@ -875,7 +670,7 @@ modelMakerAdjustedSetsRD <- function(variable_name,
       adjusted_vars = adj_vars,
       model = if (length(adj_vars)) paste0("+", paste(adj_vars, collapse = "+")) else "full",
       wide_col = paste0("adj_", adj_name, "_OR"),
-      adjustment = if (isTRUE(include_crude)) i else i
+      adjustment = i
     )
   }
 
@@ -891,13 +686,15 @@ modelMakerAdjustedSetsRD <- function(variable_name,
   )
 
   or_rows <- runner$rows
+  stage_cols <- vapply(stage_specs, `[[`, character(1), "wide_col")
   df_or <- .react_wide_from_long(
     long_df = or_rows,
     effect_col = "OR",
     sf = sf,
     format = format,
     simpleround = simpleround,
-    include_nobs = identical(sample_strategy, "common_per_predictor")
+    include_nobs = identical(sample_strategy, "common_per_predictor"),
+    wide_cols = stage_cols
   )
 
   rd_rows <- data.frame()
@@ -913,7 +710,8 @@ modelMakerAdjustedSetsRD <- function(variable_name,
       sf = sf + 1L,
       format = format,
       simpleround = simpleround,
-      include_nobs = identical(sample_strategy, "common_per_predictor")
+      include_nobs = identical(sample_strategy, "common_per_predictor"),
+      wide_cols = sub("_OR$", "_RD", stage_cols)
     )
   } else NULL
 
@@ -966,7 +764,7 @@ modelMakerAdjustedSetsRD <- function(variable_name,
 # ---------------------------------------------------------------------
 # ModelMakerMultiRD() - with robust parallel restart & no hard stop
 # ---------------------------------------------------------------------
-ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcome = "res",
+ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res",
                               sf = 2, format = "f", simpleround = FALSE,
                               joint_adjustment_vars = c("age_group_named", "sex",
                                                         "region_named", "ethnic_new",
@@ -998,6 +796,7 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
     warning("Variables not found: ", paste(missing_vars, collapse = ", "))
     list_of_variables_of_interest <- setdiff(list_of_variables_of_interest, missing_vars)
   }
+  list_of_variables_of_interest <- unique(list_of_variables_of_interest)
   if (length(list_of_variables_of_interest) == 0) stop("No variables to analyse")
 
   family <- .react_detect_outcome_family(dat[[outcome]], outcome = outcome)
@@ -1011,31 +810,6 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
       warning("Could not create '", savepath_runs, "'. Checkpointing disabled.")
       savepath_runs <- NULL
     }
-  }
-
-  # --- pretty-name helper (fallback) ---------------------------------------
-  if (!exists("get_pretty_name")) {
-    get_pretty_name <- function(var, dat, name_fun = NULL, auto_pretty = TRUE) {
-      if (!is.character(var) || length(var) != 1) return(as.character(var))
-      if (!is.null(dat) && var %in% names(dat)) {
-        lbl <- attr(dat[[var]], "label", exact = TRUE)
-        if (!is.null(lbl) && is.character(lbl) && length(lbl) == 1) return(lbl)
-      }
-      var2 <- if (auto_pretty) tools::toTitleCase(gsub("_", " ", var)) else var
-      if (is.function(name_fun)) return(tryCatch(name_fun(var2), error = function(e) var2))
-      var2
-    }
-  }
-
-  # --- set builder ---------------------------------------------------------
-  build_cumulative_sets <- function(adj_vars) {
-    if (length(adj_vars) == 0L) return(list(`full` = character(0)))
-    sets <- lapply(seq_along(adj_vars), function(i) adj_vars[seq_len(i)])
-    nm   <- vapply(seq_along(adj_vars),
-                   function(i) paste(adj_vars[seq_len(i)], collapse = "+"),
-                   FUN.VALUE = character(1))
-    names(sets) <- nm
-    sets
   }
 
   sets_for <- function(pred_name) {
@@ -1266,9 +1040,9 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
     }
   }
 
-  pretty_names <- vapply(list_of_variables_of_interest, get_pretty_name,
-                         FUN.VALUE = character(1), dat = dat, name_fun = name_fun,
-                         auto_pretty = auto_pretty)
+  pretty_names <- .react_variable_labels(list_of_variables_of_interest, dat,
+                                         name_map = cov_name_list, name_fun = name_fun,
+                                         auto_pretty = auto_pretty)
   ordered_results <- lapply(list_of_variables_of_interest, function(v) results_by_raw[[v]])
   names(ordered_results) <- pretty_names
 
@@ -1293,9 +1067,6 @@ ModelMakerMultiRD <- function(dat = dfRes, list_of_variables_of_interest, outcom
   if (nrow(out_df_rd) && "Level" %in% names(out_df_rd))   out_df_rd   <- dplyr::rename(out_df_rd,   Category = Level)
   if (nrow(out_plot_rd) && "Level" %in% names(out_plot_rd)) out_plot_rd <- dplyr::rename(out_plot_rd, Category = Level)
 
-  .repl_na_str <- function(x) { x[x == "NA (NA,NA)"] <- "-"; x }
-  if (nrow(out_df_or)) out_df_or[] <- lapply(out_df_or, function(col) if (is.character(col)) .repl_na_str(col) else col)
-  if (nrow(out_df_rd)) out_df_rd[] <- lapply(out_df_rd, function(col) if (is.character(col)) .repl_na_str(col) else col)
   out_df_or[is.na(out_df_or)] <- "-"
 
   if (!is.null(savepath)) {

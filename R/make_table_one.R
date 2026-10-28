@@ -79,8 +79,8 @@
     wilson = unlist(.wilson_interval(p, n, z = qnorm(if (x <= 0 || x >= n) 0.95 else 0.975))[
       c("lower", "upper")]),
     exact = ,
-    `clopper-pearson` = c(if (x <= 0) 0 else qbeta(0.025, x, n - x + 1),
-                          if (x >= n) 1 else qbeta(0.975, x + 1, n - x)),
+    `clopper-pearson` = c(if (x <= 0) 0 else stats::qbeta(0.025, x, n - x + 1),
+                          if (x >= n) 1 else stats::qbeta(0.975, x + 1, n - x)),
     wald = p + c(-1, 1) * qnorm(0.975) * sqrt(p * (1 - p) / n)
   )
   list(p = p, lower = max(0, bounds[[1]]), upper = min(1, bounds[[2]]))

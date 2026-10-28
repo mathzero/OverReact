@@ -5,11 +5,11 @@
 \title{Create prevalence tables}
 \usage{
 makeTablesNew(
-  dat = dfRes,
+  dat,
   result_var = "res",
   pos_val = "1",
   neg_val = "0",
-  covariates = covs,
+  covariates,
   cov_name_list,
   sens = 1,
   spec = 1,
