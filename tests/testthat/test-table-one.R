@@ -107,7 +107,8 @@ test_that("tests use complete cases and tolerate empty factor levels", {
   expected_anova <- anova(lm(height ~ group, data = dat))$`Pr(>F)`[1]
   for (show_missing in c(FALSE, TRUE)) {
     cont <- tableCont(dat, "height (cm)", "group", statistical_test = TRUE, includeNAsColvar = show_missing)
-    cat <- tableCat(dat, "doses", "group", statistical_test = TRUE, includeNAsColvar = show_missing)
+    cat <- tableCat(dat, "doses", "group", statistical_test = TRUE, includeNAsColvar = show_missing,
+                    cat_test = "chisq")
     expected_chisq <- suppressWarnings(chisq.test(table(dat$doses, droplevels(dat$group))))$p.value
     expect_equal(cont$`P-value`, expected_anova)
     expect_equal(cat$`P-value`[1], expected_chisq)
@@ -191,4 +192,75 @@ test_that("weighted intervals and tests do not depend on the scale of the weight
   large <- tableCat(dat, "c", "g", weights = "w", statistical_test = TRUE)
   expect_equal(large$`P-value`, small$`P-value`)
   expect_identical(without_counts(large$A), without_counts(small$A))
+})
+
+make_balance_data <- function(seed = 3, n = 300) {
+  set.seed(seed)
+  dat <- data.frame(g = factor(sample(c("A", "B"), n, TRUE)), age = rnorm(n, 50, 10),
+                    sex = factor(sample(c("F", "M"), n, TRUE)),
+                    rare = factor(sample(c("x", "y", "z"), n, TRUE, prob = c(0.9, 0.08, 0.02))))
+  dat$age[dat$g == "B"] <- dat$age[dat$g == "B"] + 3
+  dat$g3 <- factor(sample(c("A", "B", "C"), n, TRUE))
+  dat
+}
+
+test_that("automatic tests match the data and are recorded", {
+  dat <- make_balance_data()
+  out <- suppressMessages(tableOne(dat, c("age", "sex", "rare"), "g", statistical_test = TRUE))
+  p <- out$`P-value`[out$Variable != " "]
+  expect_equal(p[3], chisq.test(table(dat$sex, dat$g))$p.value)
+  expect_equal(p[4], fisher.test(table(dat$rare, dat$g))$p.value)
+  expect_identical(attr(out, "tests"),
+                   c(age = "One-way ANOVA", sex = "Pearson's chi-squared test",
+                     rare = "Fisher's exact test"))
+
+  medians <- suppressMessages(tableOne(dat, "age", "g3", summary_stat = "median",
+                                       statistical_test = TRUE))
+  expect_equal(medians$`P-value`[2], kruskal.test(age ~ g3, data = dat)$p.value)
+  forced <- suppressMessages(tableOne(dat, c("age", "rare"), "g3", summary_stat = "median",
+                                      statistical_test = TRUE, cont_test = "anova",
+                                      cat_test = "chisq"))
+  expect_identical(unname(attr(forced, "tests")), c("One-way ANOVA", "Pearson's chi-squared test"))
+  expect_error(tableCat(transform(dat, w = 1), "rare", "g", weights = "w", statistical_test = TRUE,
+                        cat_test = "fisher"), "unweighted")
+})
+
+test_that("standardised mean differences follow the pooled-SD and Yang-Dalton formulas", {
+  dat <- make_balance_data()
+  out <- suppressMessages(tableOne(dat, c("age", "sex", "rare"), "g", smd = TRUE))
+  smd <- out$SMD[!is.na(out$SMD)]
+
+  a <- dat$age[dat$g == "A"]
+  b <- dat$age[dat$g == "B"]
+  expect_equal(smd[1], abs(mean(a) - mean(b)) / sqrt((var(a) + var(b)) / 2))
+  p1 <- mean(dat$sex[dat$g == "A"] == "M")
+  p2 <- mean(dat$sex[dat$g == "B"] == "M")
+  expect_equal(smd[2], abs(p1 - p2) / sqrt((p1 * (1 - p1) + p2 * (1 - p2)) / 2))
+  # Three categories: sqrt(d' S^-1 d) with the pooled multinomial covariance.
+  shares <- prop.table(table(dat$rare, dat$g), 2)
+  d <- (shares[, "A"] - shares[, "B"])[-1]
+  cov_of <- function(p) { p <- p[-1]; m <- -outer(p, p); diag(m) <- p * (1 - p); m }
+  pooled <- (cov_of(shares[, "A"]) + cov_of(shares[, "B"])) / 2
+  expect_equal(smd[3], sqrt(drop(t(d) %*% solve(pooled) %*% d)))
+
+  three <- suppressMessages(tableOne(dat, "age", "g3", smd = TRUE, addNobsTopRow = FALSE))
+  ages <- split(dat$age, dat$g3)
+  pairwise <- combn(3, 2, function(ix) {
+    x <- ages[[ix[1]]]; y <- ages[[ix[2]]]
+    abs(mean(x) - mean(y)) / sqrt((var(x) + var(y)) / 2)
+  })
+  expect_equal(three$SMD, mean(pairwise))
+})
+
+test_that("tableOneDisplay renders flextable and gt tables", {
+  dat <- make_balance_data()
+  out <- suppressMessages(tableOne(dat, c("age", "sex"), "g", statistical_test = TRUE, smd = TRUE))
+  skip_if_not_installed("flextable")
+  ft <- tableOneDisplay(out, "flextable", title = "Table 1")
+  expect_s3_class(ft, "flextable")
+  expect_identical(ft$body$dataset$Characteristic[c(1, 3, 4)], c("Observations, n", "sex, n (%)", "F"))
+  expect_match(ft$footer$dataset[[1]][1], "One-way ANOVA \\(age\\)")
+  skip_if_not_installed("gt")
+  expect_s3_class(tableOneDisplay(out, "gt"), "gt_tbl")
+  expect_error(tableOneDisplay(data.frame(x = 1)), "tableOne")
 })

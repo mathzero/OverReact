@@ -104,6 +104,68 @@
   })
 }
 
+.safe_fisher <- function(tab, rowvar, colvar) {
+  tab <- tab[rowSums(tab) > 0, colSums(tab) > 0, drop = FALSE]
+  if (nrow(tab) < 2L || ncol(tab) < 2L) return(list(p.value = NA_real_))
+  tryCatch(stats::fisher.test(tab, workspace = 2e6), error = function(e) {
+    # Large tables can exhaust the exact algorithm; use a reproducible Monte Carlo p-value.
+    tryCatch(withr::with_seed(1, stats::fisher.test(tab, simulate.p.value = TRUE, B = 1e4)),
+             error = function(e2) {
+               message(sprintf("Fisher's exact test failed for '%s' x '%s': %s", rowvar, colvar, e2$message))
+               list(p.value = NA_real_)
+             })
+  })
+}
+
+.table_one_test_labels <- c(chisq = "Pearson's chi-squared test", fisher = "Fisher's exact test",
+                            anova = "One-way ANOVA", kruskal = "Kruskal-Wallis test")
+
+# "auto" uses Fisher's exact test when any expected count is below 5, where the
+# chi-squared approximation is unreliable. Weighted tables always use the chi-squared
+# test, on counts rescaled to the effective sample size.
+.table_one_cat_test <- function(tab, cat_test, weighted) {
+  if (weighted) {
+    if (identical(cat_test, "fisher")) stop("Fisher's exact test needs unweighted counts.")
+    return("chisq")
+  }
+  if (!identical(cat_test, "auto")) return(cat_test)
+  tab <- tab[rowSums(tab) > 0, colSums(tab) > 0, drop = FALSE]
+  if (nrow(tab) < 2L || ncol(tab) < 2L) return("chisq")
+  expected <- outer(rowSums(tab), colSums(tab)) / sum(tab)
+  if (any(expected < 5)) "fisher" else "chisq"
+}
+
+# Absolute standardised mean differences between groups. Continuous variables use the
+# pooled SD; categorical variables the multivariate form of Yang and Dalton (2012), which
+# for two categories is |p1 - p2| / sqrt((p1 (1 - p1) + p2 (1 - p2)) / 2). With more than
+# two groups the mean of the pairwise SMDs is reported, as in the tableone package.
+.smd_continuous <- function(x1, x2) {
+  pooled_sd <- sqrt((stats::var(x1) + stats::var(x2)) / 2)
+  if (!is.finite(pooled_sd) || pooled_sd == 0) return(NA_real_)
+  abs(mean(x1) - mean(x2)) / pooled_sd
+}
+
+.smd_categorical <- function(p1, p2) {
+  if (length(p1) < 2L) return(NA_real_)
+  category_cov <- function(p) {
+    p <- p[-1]
+    out <- -outer(p, p)
+    diag(out) <- p * (1 - p)
+    out
+  }
+  d <- (p1 - p2)[-1]
+  pooled <- (category_cov(p1) + category_cov(p2)) / 2
+  value <- tryCatch(drop(t(d) %*% MASS::ginv(pooled) %*% d), error = function(e) NA_real_)
+  if (!is.finite(value)) return(NA_real_)
+  sqrt(max(value, 0))
+}
+
+.mean_pairwise_smd <- function(groups, smd_fun) {
+  if (length(groups) < 2L) return(NA_real_)
+  pairs <- utils::combn(length(groups), 2)
+  mean(apply(pairs, 2, function(ix) smd_fun(groups[[ix[1]]], groups[[ix[2]]])), na.rm = TRUE)
+}
+
 .table_one_cells <- function(counts, denominators, include_percentages,
                              confint, comma_thousands, ess = NULL) {
   vapply(seq_along(counts), function(i) {
@@ -138,7 +200,10 @@ tableCat <- function(dat,
                      statistical_test = FALSE,
                      includeNAsColvar = TRUE,
                      includeNAsRowvar = TRUE,
-                     rowwise_percentages = rowwise_precentages) {
+                     rowwise_percentages = rowwise_precentages,
+                     cat_test = c("auto", "chisq", "fisher"),
+                     smd = FALSE) {
+  cat_test <- match.arg(cat_test)
   if (!.table_one_check_columns(dat, rowvar, colvar, weights)) return(NULL)
 
   rows <- .table_one_factor(dat[[rowvar]], includeNAsRowvar)
@@ -179,20 +244,31 @@ tableCat <- function(dat,
                                                      ess))
   }
 
-  if (statistical_test) {
-    # Tests compare observed categories; displaying missing categories does not change inference.
+  if (statistical_test || isTRUE(smd)) {
+    # Tests and SMDs compare observed categories; displaying missing categories does not
+    # change inference.
     valid <- !is.na(as.character(dat[[rowvar]]))
     if (!is.null(colvar)) valid <- valid & !is.na(as.character(dat[[colvar]]))
-    test_counts <- .table_one_counts(rows[valid], groups[valid], if (is.null(w)) NULL else w[valid],
-                                     digits = NULL)
+    observed_counts <- .table_one_counts(rows[valid], groups[valid], if (is.null(w)) NULL else w[valid],
+                                         digits = NULL)
+  }
+  if (statistical_test) {
+    test_counts <- observed_counts
     if (!is.null(w)) {
       # Rescale weighted counts to the effective sample size: weights describe the
       # population, not extra observations, so their scale must not shrink the p-value.
       ess <- .kish_ess(w[valid])
       if (is.finite(ess) && sum(test_counts) > 0) test_counts <- test_counts * (ess / sum(test_counts))
     }
-    p <- .safe_chisq(test_counts, rowvar, colvar)$p.value
+    test <- .table_one_cat_test(test_counts, cat_test, weighted = !is.null(w))
+    p <- if (test == "fisher") .safe_fisher(test_counts, rowvar, colvar)$p.value else .safe_chisq(test_counts, rowvar, colvar)$p.value
     tab$`P-value` <- c(p, rep(NA_real_, nrow(counts)))
+    attr(tab, "test") <- .table_one_test_labels[[test]]
+  }
+  if (isTRUE(smd)) {
+    observed <- observed_counts[rowSums(observed_counts) > 0, colSums(observed_counts) > 0, drop = FALSE]
+    shares <- lapply(seq_len(ncol(observed)), function(j) observed[, j] / sum(observed[, j]))
+    tab$SMD <- c(.mean_pairwise_smd(shares, .smd_categorical), rep(NA_real_, nrow(counts)))
   }
   tab
 }
@@ -205,7 +281,10 @@ tableCont <- function(dat,
                       summary_stat = "mean",
                       statistical_test = FALSE,
                       includeNAsColvar = TRUE,
-                      includeNAsRowvar = TRUE) {
+                      includeNAsRowvar = TRUE,
+                      cont_test = c("auto", "anova", "kruskal"),
+                      smd = FALSE) {
+  cont_test <- match.arg(cont_test)
   if (!.table_one_check_columns(dat, rowvar, colvar, weights)) return(NULL)
   if (!is.numeric(dat[[rowvar]])) stop("Continuous row variables must be numeric.")
   if (!is.null(weights)) {
@@ -230,18 +309,30 @@ tableCont <- function(dat,
     tab[[levels(groups)[j]]] <- summarize(values[which(as.integer(groups) == j)])
   }
 
+  # Local column names avoid parsing user-supplied names as R code.
+  test_dat <- data.frame(value = values, group = if (is.null(colvar)) rep("All data", nrow(dat)) else as.character(dat[[colvar]]))
+  test_dat <- test_dat[complete.cases(test_dat), , drop = FALSE]
+  test_dat$group <- factor(test_dat$group)
+
   if (statistical_test) {
-    # Local column names avoid parsing user-supplied names as R code.
-    test_dat <- data.frame(value = values, group = if (is.null(colvar)) rep("All data", nrow(dat)) else as.character(dat[[colvar]]))
-    test_dat <- test_dat[complete.cases(test_dat), , drop = FALSE]
-    test_dat$group <- factor(test_dat$group)
+    # "auto" pairs the test with the summary: ANOVA for means, Kruskal-Wallis for medians.
+    test <- if (identical(cont_test, "auto")) if (summary_stat == "median") "kruskal" else "anova" else cont_test
     p <- if (nlevels(test_dat$group) < 2L) NA_real_ else tryCatch({
-      anova(lm(value ~ group, data = test_dat))$`Pr(>F)`[1]
+      if (test == "kruskal") {
+        stats::kruskal.test(value ~ group, data = test_dat)$p.value
+      } else {
+        anova(lm(value ~ group, data = test_dat))$`Pr(>F)`[1]
+      }
     }, error = function(e) {
-      message(sprintf("ANOVA failed for '%s': %s", rowvar, e$message))
+      message(sprintf("%s failed for '%s': %s", .table_one_test_labels[[test]], rowvar, e$message))
       NA_real_
     })
     tab$`P-value` <- if (is.finite(p)) p else NA_real_
+    attr(tab, "test") <- .table_one_test_labels[[test]]
+  }
+  if (isTRUE(smd)) {
+    by_group <- Filter(function(x) length(x) >= 2L, split(test_dat$value, test_dat$group))
+    tab$SMD <- .mean_pairwise_smd(by_group, .smd_continuous)
   }
   tab
 }
@@ -261,7 +352,12 @@ tableOne <- function(dat,
                      includeNAsRowvar = TRUE,
                      formatPvalsForEpiPaper = FALSE,
                      addNobsTopRow = TRUE,
-                     rowwise_percentages = rowwise_precentages) {
+                     rowwise_percentages = rowwise_precentages,
+                     cat_test = c("auto", "chisq", "fisher"),
+                     cont_test = c("auto", "anova", "kruskal"),
+                     smd = FALSE) {
+  cat_test <- match.arg(cat_test)
+  cont_test <- match.arg(cont_test)
   if (!is.data.frame(dat) || !nrow(dat)) stop("'dat' must be a data frame with at least one row.")
   if (anyDuplicated(names(dat))) stop("'dat' must have unique column names.")
   if (!is.character(rowvars) || !length(rowvars) || anyNA(rowvars)) stop("'rowvars' must contain variable names.")
@@ -296,6 +392,7 @@ tableOne <- function(dat,
       obs$Level <- ""
       obs$Missing <- "0"
       if (statistical_test) obs$`P-value` <- NA_real_
+      if (isTRUE(smd)) obs$SMD <- NA_real_
       res_list[[1]] <- obs
       block_names <- "Observations"
     }
@@ -313,13 +410,13 @@ tableOne <- function(dat,
     if (continuous) {
       res <- tableCont(dat, rv, colvar, weights = weights, summary_stat = summary_stat,
                        statistical_test = statistical_test, includeNAsColvar = includeNAsColvar,
-                       includeNAsRowvar = includeNAsRowvar)
+                       includeNAsRowvar = includeNAsRowvar, cont_test = cont_test, smd = smd)
     } else {
       res <- tableCat(dat, rv, colvar, confint = confint,
                       include_percentages = include_percentages, rowwise_percentages = rowwise_percentages,
                       weights = weights, comma_thousands = comma_thousands,
                       statistical_test = statistical_test, includeNAsColvar = includeNAsColvar,
-                      includeNAsRowvar = includeNAsRowvar)
+                      includeNAsRowvar = includeNAsRowvar, cat_test = cat_test, smd = smd)
     }
     if (is.null(res)) next
     res_list[[length(res_list) + 1L]] <- res
@@ -327,6 +424,13 @@ tableOne <- function(dat,
     block_names <- c(block_names, if (is.na(label)) rv else as.character(label))
   }
   if (!length(res_list)) stop("No valid row variables to tabulate - nothing to do.")
+  # The test behind each block's p-value, kept as an attribute (bind_rows() drops it).
+  tests <- vapply(res_list, function(res) {
+    test <- attr(res, "test")
+    if (is.null(test)) NA_character_ else test
+  }, character(1))
+  names(tests) <- block_names
+  tests <- tests[!is.na(tests)]
 
   for (i in seq_along(res_list)) {
     res <- res_list[[i]]
@@ -343,6 +447,7 @@ tableOne <- function(dat,
     out$`P-value`[out$Variable == " "] <- " "
   }
   rownames(out) <- NULL
+  if (statistical_test) attr(out, "tests") <- tests
   out
 }
 

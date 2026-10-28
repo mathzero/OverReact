@@ -2,6 +2,7 @@
 \alias{tableOne}
 \alias{tableCat}
 \alias{tableCont}
+\alias{tableOneDisplay}
 \title{Descriptive Tables by Group}
 \description{
 Summarise continuous and categorical variables in a display-ready data frame,
@@ -14,17 +15,24 @@ tableOne(dat, rowvars, colvar = NULL, cov_names = NULL,
   comma_thousands = FALSE, statistical_test = FALSE,
   includeNAsColvar = TRUE, includeNAsRowvar = TRUE,
   formatPvalsForEpiPaper = FALSE, addNobsTopRow = TRUE,
-  rowwise_percentages = rowwise_precentages)
+  rowwise_percentages = rowwise_precentages,
+  cat_test = c("auto", "chisq", "fisher"),
+  cont_test = c("auto", "anova", "kruskal"), smd = FALSE)
 
 tableCat(dat, rowvar, colvar, confint = TRUE,
   include_percentages = TRUE, rowwise_precentages = TRUE,
   weights = NULL, comma_thousands = FALSE, statistical_test = FALSE,
   includeNAsColvar = TRUE, includeNAsRowvar = TRUE,
-  rowwise_percentages = rowwise_precentages)
+  rowwise_percentages = rowwise_precentages,
+  cat_test = c("auto", "chisq", "fisher"), smd = FALSE)
 
 tableCont(dat, rowvar, colvar = NULL, weights = NULL,
   summary_stat = "mean", statistical_test = FALSE,
-  includeNAsColvar = TRUE, includeNAsRowvar = TRUE)
+  includeNAsColvar = TRUE, includeNAsRowvar = TRUE,
+  cont_test = c("auto", "anova", "kruskal"), smd = FALSE)
+
+tableOneDisplay(tab, output = c("flextable", "gt"), title = NULL,
+  p_digits = 3, smd_digits = 2)
 }
 \arguments{
   \item{dat}{A data frame. \code{tableOne} requires at least one row and unique column names.}
@@ -45,8 +53,8 @@ tableCont(dat, rowvar, colvar = NULL, weights = NULL,
     Continuous summaries with weights raise an error; older versions silently ignored them.}
   \item{summary_stat}{\code{"mean"} for mean (SD), or \code{"median"} for median (IQR).}
   \item{comma_thousands}{Use comma separators in categorical counts.}
-  \item{statistical_test}{Add Pearson chi-squared tests for categorical variables and
-    one-way ANOVA for continuous variables (also when displaying medians).
+  \item{statistical_test}{Add a p-value per variable, from the tests chosen by
+    \code{cat_test} and \code{cont_test}.
     Tests use complete cases of the row and grouping variables, excluding empty levels.
     With weights, tests account for unequal weighting through the effective sample
     size, but not for clustering or stratification.}
@@ -54,6 +62,21 @@ tableCont(dat, rowvar, colvar = NULL, weights = NULL,
   \item{includeNAsRowvar}{Display missing categorical row values as a separate level.
     Continuous summaries always omit missing measurements.}
   \item{formatPvalsForEpiPaper}{Format available p-values with rounding and significance asterisks.}
+  \item{cat_test}{Test for categorical variables: \code{"auto"} uses Fisher's exact test
+    when any expected count is below 5 and Pearson's chi-squared test otherwise;
+    \code{"chisq"} or \code{"fisher"} force one. Weighted tables always use the
+    chi-squared test.}
+  \item{cont_test}{Test for continuous variables: \code{"auto"} uses one-way ANOVA for
+    means and the Kruskal-Wallis test for medians; \code{"anova"} or \code{"kruskal"}
+    force one.}
+  \item{smd}{Add an \code{SMD} column of absolute standardised mean differences between
+    the observed groups: pooled-SD differences for continuous variables and the
+    Yang-Dalton multivariate form for categorical ones, averaged over pairs of groups
+    when there are more than two.}
+  \item{tab}{A \code{tableOne} result.}
+  \item{output}{Table class to build: \code{"flextable"} or \code{"gt"} (each needs its package).}
+  \item{title}{Optional table title.}
+  \item{p_digits, smd_digits}{Decimal places for p-values and SMDs.}
   \item{addNobsTopRow}{Prepend one observation-count row. Its group percentages are always
     proportions of the total across displayed groups, and it has no hypothesis test.}
 }
@@ -79,7 +102,10 @@ on one measurement has \code{NA} for its SD. Tests that cannot compare at least
 two observed groups return a missing p-value.
 }
 \value{
-A data frame. \code{tableOne} includes \code{Variable}, \code{Level},
+A data frame. With \code{statistical_test = TRUE}, the \code{"tests"} attribute
+of the \code{tableOne} result names the test used for each variable.
+\code{tableOneDisplay} returns a \code{flextable} or \code{gt_tbl} with variable
+rows in bold, level rows indented and a footnote naming the tests. \code{tableOne} includes \code{Variable}, \code{Level},
 \code{Missing}, \code{Overall}, group columns, and optionally \code{P-value}.
 Categorical blocks contain a header row followed by level rows; continuous
 blocks contain one row. \code{tableCat} and \code{tableCont} return individual

@@ -63,6 +63,7 @@ clinical$positive <- rbinom(
 | `tableOne()` | Combine summaries of `rowvars`, optionally stratified by `colvar`. Returns `Variable`, `Level`, `Missing`, `Overall`, group columns and optional `P-value`; an observation-count row is included by default. |
 | `tableCat()` | Tabulate one categorical variable, with counts, row or column percentages, optional Wilson confidence intervals and a chi-squared test. Returns a block with a `units` column. |
 | `tableCont()` | Summarise one numeric variable as mean (SD) or median (IQR), overall and by group; optionally add an ANOVA p-value. Returns one row with a `units` column. |
+| `tableOneDisplay()` | Render a `tableOne()` result as a `flextable` or `gt` table, with variable rows in bold, indented levels, formatted p-values and SMDs, and a footnote naming each variable's test. |
 | `calculate_prop_ci()` | Calculate a binomial proportion and 95% Wilson or normal-approximation interval from a count `x` and positive integer denominator `n`. Returns `proportion`, `lower` and `upper`. |
 
 ```r
@@ -97,14 +98,24 @@ undefined categorical percentages (`NA%`). Group labels retain spaces and
 punctuation; genuine collisions receive numeric suffixes. A literal `"NA"` group
 and a missing group therefore remain distinct.
 
-With `statistical_test = TRUE`, categorical comparisons use Pearson's
-chi-squared test, with Yates' continuity correction for 2 × 2 tables. Continuous
-comparisons use the standard one-way ANOVA F-test, including when medians are
-displayed. Tests use complete cases for the variable and group, excluding empty
-levels and displayed missing categories. They are omnibus comparisons without
-multiplicity adjustment. No test is attached to the observation-count row, and
-unidentifiable comparisons return missing p-values. Exact tests, Welch ANOVA
-and non-parametric alternatives are not selected automatically.
+With `statistical_test = TRUE`, tests follow the data by default:
+`cat_test = "auto"` uses Fisher's exact test when any expected count is below 5
+and Pearson's chi-squared test (with Yates' correction for 2 × 2 tables)
+otherwise, and `cont_test = "auto"` uses one-way ANOVA for means and the
+Kruskal–Wallis test for medians. `"chisq"`, `"fisher"`, `"anova"` and `"kruskal"`
+force a test; weighted tables always use the chi-squared test. The result's
+`"tests"` attribute names the test behind each p-value. Tests use complete cases
+for the variable and group, excluding empty levels and displayed missing
+categories. They are omnibus comparisons without multiplicity adjustment. No test
+is attached to the observation-count row, and unidentifiable comparisons return
+missing p-values.
+
+`smd = TRUE` adds an `SMD` column of absolute standardised mean differences
+between the observed groups: the pooled-SD difference for continuous variables
+and the Yang–Dalton multivariate form for categorical ones (for two categories,
+`|p1 - p2| / sqrt((p1(1 - p1) + p2(1 - p2)) / 2)`). With more than two groups the
+mean of the pairwise SMDs is shown, as in the tableone package. `tableOneDisplay()`
+turns the table into a `flextable` (for Word) or `gt` (for HTML) table.
 
 `confint = TRUE` adds 95% Wilson intervals to categorical percentages;
 `formatPvalsForEpiPaper = TRUE` formats available p-values with asterisks.
