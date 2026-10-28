@@ -1,5 +1,4 @@
 test_that("plotReactForest clips out-of-range intervals instead of dropping them", {
-  skip_if_not_installed("ggnewscale")
   plot_df <- data.frame(
     Variable = "V", Category = c("a", "b", "c"),
     OR = c(2, 20, 3), Lower = c(1.5, 12, 0.1), Upper = c(2.5, 35, 90),

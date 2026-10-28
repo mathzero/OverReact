@@ -4,12 +4,6 @@
 # devtools::document()
 # devtools::check()
 
-#' @import dplyr
-#' @import ggplot2
-#' @import extrafont
-#' @import hrbrthemes
-#' @import showtext
-#' @import sysfonts
 
 
 theme_react <- function(base_family = "sans",

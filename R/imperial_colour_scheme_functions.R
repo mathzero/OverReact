@@ -1,17 +1,3 @@
-#' Return function to interpolate a new color palette
-#'
-#' @param palette Character name of palette in imperial_palettes. Choose from:
-#' \itemize{
-#'  \item default, earth, cool, warm, soft, bold, nature,
-#'  \item two_col_grey_teal, two_col_pink_purple, two_col_blue_green
-#' }
-#' @param reverse Boolean indicating whether the palette should be reversed
-#' @param ... Additional arguments to pass to colorRampPalette()
-#' @import ggplot2
-#' @import dichromat
-#' @import tinter
-
-
 normalise_hex <- function(x) {
   toupper(trimws(x))
 }

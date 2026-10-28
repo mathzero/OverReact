@@ -544,7 +544,6 @@ plotReactForest <- function(univ_df_plot,
   if (!requireNamespace("dplyr", quietly = TRUE)) stop("Please install dplyr.")
   if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Please install ggplot2.")
   if (!requireNamespace("ggforce", quietly = TRUE)) stop("Please install ggforce.")
-  if (!requireNamespace("ggnewscale", quietly = TRUE)) stop("Please install ggnewscale.")
   if (!requireNamespace("MASS", quietly = TRUE)) stop("Please install MASS.")
 
   effect <- match.arg(effect)
@@ -707,22 +706,41 @@ plotReactForest <- function(univ_df_plot,
     }
   }
 
+  # Shade alternate rows with a constant fill (white rows are the panel background), so
+  # the stripes need no fill scale; geom_blank keeps every category on the axis.
+  stripe_layers <- list(
+    ggplot2::geom_blank(
+      data = panel_stripes,
+      ggplot2::aes(x = Category_key, y = null_value),
+      inherit.aes = FALSE
+    ),
+    ggplot2::geom_tile(
+      data = panel_stripes[panel_stripes$stripe_col != "white", , drop = FALSE],
+      ggplot2::aes(x = Category_key, y = null_value, height = Inf),
+      inherit.aes = FALSE,
+      width = 1,
+      fill = "grey96",
+      alpha = alpha_val,
+      colour = NA
+    )
+  )
+  if (isTRUE(strip_borders)) {
+    stripe_layers <- c(stripe_layers, list(ggplot2::geom_tile(
+      data = panel_stripes,
+      ggplot2::aes(x = Category_key, y = null_value, height = Inf),
+      inherit.aes = FALSE,
+      width = 1,
+      fill = NA,
+      colour = "grey70",
+      linetype = "dashed"
+    )))
+  }
+
   p <- ggplot2::ggplot(
     plot_df,
     ggplot2::aes(x = Category_key, y = effect_value, colour = adjust_desc, group = adjust_desc)
   ) +
-    ggplot2::geom_tile(
-      data = panel_stripes,
-      ggplot2::aes(x = Category_key, y = null_value, height = Inf, fill = stripe_col),
-      inherit.aes = FALSE,
-      width = 1,
-      alpha = alpha_val,
-      colour = if (isTRUE(strip_borders)) "grey70" else NA,
-      linetype = "dashed",
-      show.legend = FALSE
-    ) +
-    ggplot2::scale_fill_identity() +
-    ggnewscale::new_scale_fill() +
+    stripe_layers +
     ggplot2::geom_hline(yintercept = null_value, linewidth = 0.1, colour = "grey30") +
     ggplot2::geom_point(
       position = dodger,

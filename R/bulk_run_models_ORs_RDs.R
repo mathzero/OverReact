@@ -1,15 +1,3 @@
-#' @import dplyr
-#' @import stats
-#' @import mgcv
-#' @import progress
-#' @import car
-#' @import parallel
-#' @import doParallel
-#' @import foreach
-#' @import MASS
-#' @import data.table
-#' @import stringr
-
 # =============================================================================
 #  Model-maker utilities -- VERSION WITH IMPROVED ERROR HANDLING
 # =============================================================================

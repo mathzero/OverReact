@@ -13,9 +13,6 @@ The current source requires R ≥ 4.1. Install the development branch from GitHu
 install.packages("remotes")
 remotes::install_github("mathzero/OverReact", ref = "dev")
 
-# Required by plotReactForest(); currently absent from DESCRIPTION.
-install.packages("ggnewscale")
-
 library(OverReact)
 ```
 
@@ -321,8 +318,7 @@ Forest plots use a logarithmic odds-ratio scale with null value 1, and linear
 coefficient or risk-difference scales with null value 0. `xrange` sets the
 visible odds-ratio range (default 1/4 to 16); estimates or interval bounds beyond
 it are clipped at the panel edge, with a warning. Pass numeric
-`plot_output` data rather than formatted table strings. `plotReactForest()`
-requires `ggnewscale` in addition to the declared package dependencies.
+`plot_output` data rather than formatted table strings.
 
 `imperial_colours` stores named hexadecimal colours; `imperial_palettes` stores
 palette definitions. Available palettes are `default`, `gradient`, `earth`,

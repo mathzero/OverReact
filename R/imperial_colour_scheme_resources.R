@@ -1,5 +1,3 @@
-#' @import ggplot2
-
 imperial_colours <- c(
   Dark = "#232333",
   Navy_Blue = "#000080",

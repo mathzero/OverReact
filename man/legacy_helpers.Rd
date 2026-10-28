@@ -19,9 +19,6 @@
 \alias{crossTabMulti}
 \alias{dateCleaner}
 \alias{get_pretty_name}
-\alias{imperial_colours}
-\alias{imperial_cols}
-\alias{imperial_palettes}
 \alias{makeORTable}
 \alias{makeRDTable}
 \alias{makeStratifiedPrevalenceTablePlottable}
@@ -42,8 +39,6 @@
 \alias{saveREACT}
 \alias{saveREACTplot}
 \alias{saveREACTtable}
-\alias{scale_color_imperial}
-\alias{scale_fill_imperial}
 \alias{stratifiedTables}
 \alias{theme_mw}
 \alias{theme_react}
