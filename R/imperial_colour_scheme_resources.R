@@ -1,7 +1,3 @@
-#' @import ggplot2
-#' @import dichromat
-
-# Define the new color palette based on the extracted HEX values
 imperial_colours <- c(
   Dark = "#232333",
   Navy_Blue = "#000080",
@@ -32,29 +28,39 @@ imperial_colours <- c(
   Pale_Green = "#98fb98"
 )
 
-# Function to extract new colors as hex codes
 imperial_cols <- function(...) {
   cols <- c(...)
-  if (is.null(cols))
-    return (imperial_colours)
+  if (is.null(cols)) {
+    return(imperial_colours)
+  }
   imperial_colours[cols]
 }
 
-# Define new palettes
+# Palettes are for marks drawn on the themes' white background, so they leave out
+# White_Smoke and Yellow: both are nearly invisible on white (contrast ratio below 1.1).
+# They remain available through imperial_cols().
 imperial_palettes <- list(
-
   `default` = imperial_cols(
-    "Navy_Blue",
+    "Imperial_Blue",
+    "Deep_Sky_Blue",
     "Orange_Red",
     "Teal",
-    "Turquoise",
-    "Lime",
-    "Khaki",
     "Slate_Gray",
-    "Violet",
-    "Saddle_Brown",
+    "Orange",
     "Dark_Green",
-    "Deep_Sky_Blue"
+    "Dark"
+  ),
+
+  `gradient` = imperial_cols(
+    "Navy_Blue",
+    "Imperial_Blue",
+    "Deep_Sky_Blue",
+    "Slate_Gray",
+    "Teal",
+    "Dark_Green",
+    "Dark",
+    "Crimson",
+    "Orange"
   ),
 
   `earth` = imperial_cols(
@@ -77,12 +83,10 @@ imperial_palettes <- list(
     "Orange_Red",
     "Dark_Orange",
     "Salmon",
-    "Crimson",
-    "Yellow"
+    "Crimson"
   ),
 
   `soft` = imperial_cols(
-    "White_Smoke",
     "Lavender",
     "Light_Pink",
     "Pale_Turquoise",
@@ -106,15 +110,17 @@ imperial_palettes <- list(
   ),
 
   `two_col_grey_teal` = imperial_cols(
-    "Slate_Gray", "Teal"
+    "Slate_Gray",
+    "Teal"
   ),
 
   `two_col_pink_purple` = imperial_cols(
-    "Light_Pink", "Lavender"
+    "Light_Pink",
+    "Lavender"
   ),
 
   `two_col_blue_green` = imperial_cols(
-    "Deep_Sky_Blue", "Pale_Green"
+    "Deep_Sky_Blue",
+    "Pale_Green"
   )
 )
-

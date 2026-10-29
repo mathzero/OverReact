@@ -1,7 +1,17 @@
-#' Function created on 23-2-2021 by Matt Whitaker, to work with new wrangling system for REACT-2
-
-### helper function
-specifyDecimal <- function(x,k, format = "fg", simpleround =F){
-  out= sprintf(x,fmt=paste0("%#.",k,"f"))
-  return(out)
+#' Format numeric values with fixed decimals
+#'
+#' @param x Numeric vector to format.
+#' @param k Number of decimal places to display.
+#' @param format Format string passed to \code{formatC()}.
+#' @param simpleround Logical; if \code{TRUE}, return rounded numeric values
+#'   instead of formatted strings.
+#'
+#' @return A character vector of formatted values when
+#'   \code{simpleround = FALSE}, or a rounded numeric vector when
+#'   \code{simpleround = TRUE}.
+specifyDecimal <- function(x,k, format = "fg", simpleround = FALSE){
+  if (simpleround) {
+    return(round(x, k))
+  }
+  formatC(x, digits = k, format = format)
 }

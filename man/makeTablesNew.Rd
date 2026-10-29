@@ -2,19 +2,17 @@
 % Please edit documentation in R/make_prevalence_tables.R
 \name{makeTablesNew}
 \alias{makeTablesNew}
-\title{Function created on 23-2-2021 by Matt Whitaker, to work with new wrangling system for REACT-2
-cov_name_list can be found in cats_and_covs.R and is a named list of all useful covariates in react2
-Any named list of covariates with variable descriptions will work here, or the function will work without}
+\title{Create prevalence tables}
 \usage{
 makeTablesNew(
-  dat = dfRes,
+  dat,
   result_var = "res",
   pos_val = "1",
   neg_val = "0",
-  covariates = covs,
-  cov_name_list,
-  sens = 0.844,
-  spec = 0.986,
+  covariates,
+  cov_name_list = NULL,
+  sens = 1,
+  spec = 1,
   weights = NULL,
   suffix = NULL,
   sf = 4,
@@ -25,10 +23,53 @@ makeTablesNew(
   separator = ","
 )
 }
-\description{
-Relies on Kylie's add_conf_ints function
+\arguments{
+\item{dat}{A data frame containing the analysis variables.}
+
+\item{result_var}{Name of the binary outcome column.}
+
+\item{pos_val}{Value identifying positive outcomes in \code{result_var}.}
+
+\item{neg_val}{Value identifying negative outcomes in \code{result_var}.}
+
+\item{covariates}{Character vector of variables for which prevalence tables
+should be created.}
+
+\item{cov_name_list}{Optional named vector or list mapping variable names to
+display labels.}
+
+\item{sens}{Sensitivity used for the adjusted prevalence calculation. The
+default of 1, with \code{spec = 1}, applies no assay correction.}
+
+\item{spec}{Specificity used for the adjusted prevalence calculation.}
+
+\item{weights}{Optional column name containing observation weights.}
+
+\item{suffix}{Optional suffix appended to output filenames when
+\code{write_to_file = TRUE}.}
+
+\item{sf}{Number of decimal places used in formatted output.}
+
+\item{for_report}{Logical; if \code{TRUE}, return formatted strings for
+reporting.}
+
+\item{write_to_file}{Logical; if \code{TRUE}, write each table to disk as a
+CSV file.}
+
+\item{percent}{Logical; if \code{TRUE}, prevalence values are returned on a
+percentage scale.}
+
+\item{output_list}{Logical; if \code{TRUE}, return a named list, otherwise
+bind results into one data frame.}
+
+\item{separator}{Separator used inside formatted interval strings.}
 }
-\details{
-Make prevalence tables
-for instances where there are only zeros or ones in the results (ie all pos or all neg)
+\value{
+A named list of prevalence tables, or a single bound data frame when
+  \code{output_list = FALSE}.
+}
+\description{
+Build prevalence tables for one or more covariates against a binary result
+variable, with optional weighted estimates and adjusted prevalence using
+supplied sensitivity and specificity values.
 }

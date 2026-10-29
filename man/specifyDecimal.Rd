@@ -2,10 +2,25 @@
 % Please edit documentation in R/specify_decimal.R
 \name{specifyDecimal}
 \alias{specifyDecimal}
-\title{Function created on 23-2-2021 by Matt Whitaker, to work with new wrangling system for REACT-2}
+\title{Format numeric values with fixed decimals}
 \usage{
-specifyDecimal(x, k, format = "fg", simpleround = F)
+specifyDecimal(x, k, format = "fg", simpleround = FALSE)
+}
+\arguments{
+\item{x}{Numeric vector to format.}
+
+\item{k}{Number of decimal places to display.}
+
+\item{format}{Format string passed to \code{formatC()}.}
+
+\item{simpleround}{Logical; if \code{TRUE}, return rounded numeric values
+instead of formatted strings.}
+}
+\value{
+A character vector of formatted values when
+  \code{simpleround = FALSE}, or a rounded numeric vector when
+  \code{simpleround = TRUE}.
 }
 \description{
-Function created on 23-2-2021 by Matt Whitaker, to work with new wrangling system for REACT-2
+Format numeric values with fixed decimals
 }

@@ -1,19 +1,15 @@
 ### Simple helper functions to clean up the initial data sets
 
 # Created by Matt Whitaker 19/11/2020
-# devtools::document()
-# devtools::check()
 
-
-#' @import dplyr
-#' @param dat data to be cleaned
-#' @param datatype Specify the data type (from 'continuous', 'binary', or 'date' )
-#' @param negval If data is binary, what is the negative value in the uncleaned data?
-#' @param posval If data is binary, what is the positive value in the uncleaned data?
-#' @param floornumber If data is continuous, what is the lowest 'real' value in the uncleaned data?
-#' @param dateFormat If data is date, what is the input date format?
-#' @param dateFormatOut If data is date, what is the required output date format?
-#' @param df A data frame. Columns that can be converted to numeric class without error will be converted
+# @param dat data to be cleaned
+# @param datatype Specify the data type (from 'continuous', 'binary', or 'date' )
+# @param negval If data is binary, what is the negative value in the uncleaned data?
+# @param posval If data is binary, what is the positive value in the uncleaned data?
+# @param floornumber If data is continuous, what is the lowest 'real' value in the uncleaned data?
+# @param dateFormat If data is date, what is the input date format?
+# @param dateFormatOut If data is date, what is the required output date format?
+# @param df A data frame. Columns that can be converted to numeric class without error will be converted
 
 
 ### function to clean all types of variable
@@ -21,7 +17,7 @@
 reactCleaner <- function(dat,datatype = "continuous", negval = 0, posval = 1, floornumber = 0,dateFormat,
                          dateFormatOut = "%Y-%m-%d"){
   if(!datatype %in% c("continuous", "binary", "date")){
-    print("Please select datatype from 'continuous', 'binary', or 'date'")
+    stop("Please select datatype from 'continuous', 'binary', or 'date'")
   }
   if(datatype=="binary"){
     out <- dplyr::case_when(dat == posval ~ 1,
@@ -32,14 +28,9 @@ reactCleaner <- function(dat,datatype = "continuous", negval = 0, posval = 1, fl
                          dat >= floornumber ~ dat,
                          TRUE ~ NA_real_)
   }else{
-    out <- format(as.Date(ifelse(dat %in% c("#NULL!","-66", "-99"),
-                              NA_character_,
-                              dat),format = dateFormat),dateFormatOut)
+    out <- format(dateCleaner(dat, dateFormat), dateFormatOut)
   }
   return(out)
-
-
-
 }
 
 
@@ -71,12 +62,13 @@ continuousCleaner <- function(dat, floornumber =1){
 }
 
 
-### a function to mutate longcovid (and other) continuous variables
+### a function to mutate longcovid (and other) date variables
 dateCleaner <- function(dat, dateFormat){
-  out <- as.Date(ifelse(dat %in% c("#NULL!","-66", "-99"),
-                            NA_character_,
-                            dat),format = dateFormat)
-  return(out)
+  if (inherits(dat, "Date")) return(dat)
+  # Work on text: ifelse() on a factor would return its integer codes.
+  dat <- as.character(dat)
+  dat[dat %in% c("#NULL!", "-66", "-99")] <- NA_character_
+  as.Date(dat, format = dateFormat)
 }
 
 
@@ -84,19 +76,18 @@ dateCleaner <- function(dat, dateFormat){
 # IPSOS Mori missing data designations
 
 naReporter <- function(data){
-  na_results <- data.frame(variable=NA, missing=NA,not_applicable=NA,
-                           non_response=NA,prefer_not_to_say=NA,
-                           responses=NA)
-
-  for(i in 1:ncol(data)){
-    nm=colnames(data)[[i]]
-    m=sum(is.na(data[,i]),na.rm=T)
-    a=sum(data[,i]==-91,na.rm=T)
-    b=sum(data[,i]==-92,na.rm=T) + sum(data[,i]==-77,na.rm=T)
-    c=sum(data[,i]==-99,na.rm=T)
-    d=nrow(data)-m-a-b-c
-    na_results[i,]=c(nm,m,a,b,c,d)
-  }
+  data <- as.data.frame(data)
+  counts <- lapply(names(data), function(nm) {
+    x <- data[[nm]]
+    m <- sum(is.na(x))
+    a <- sum(x == -91, na.rm = TRUE)
+    b <- sum(x == -92, na.rm = TRUE) + sum(x == -77, na.rm = TRUE)
+    c <- sum(x == -99, na.rm = TRUE)
+    data.frame(variable = nm, missing = m, not_applicable = a, non_response = b,
+               prefer_not_to_say = c, responses = nrow(data) - m - a - b - c,
+               stringsAsFactors = FALSE)
+  })
+  do.call(rbind, counts)
 }
 
 
@@ -114,14 +105,14 @@ canBeNumeric <- function(x){
 
 # convert all possible cols to numeric
 checkConvertNumeric <- function(df){
-  # convert all possible cols to numeric
-  df_out <- as.data.frame(lapply(df, function(col){
-    if(canBeNumeric(col)){
-      as.numeric(as.character(col))
-    }else{
-      col
-    }
-  }))
-  return(df_out)
+  # Assign in place to keep the column names, and convert only when distinct values stay
+  # distinct: codes such as "01" and "1" would otherwise be merged.
+  df[] <- lapply(df, function(col){
+    if(!canBeNumeric(col)) return(col)
+    num <- as.numeric(as.character(col))
+    observed <- !is.na(col)
+    if(length(unique(as.character(col[observed]))) != length(unique(num[observed]))) return(col)
+    num
+  })
+  return(df)
 }
-
