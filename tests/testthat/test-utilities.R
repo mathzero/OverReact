@@ -37,7 +37,51 @@ test_that("export helpers write matrices, tables and workbooks", {
 
   saveREACTtable(table(c("u", "v", "v")), outpath = paste0(dir, "/prefix_"), filename = "tab")
   expect_true(file.exists(file.path(dir, "prefix_tab.csv")))
+})
 
+test_that("CSV exports keep text, missing values and numbers exactly", {
+  dir <- withr::local_tempdir()
+  df <- data.frame(text = c("plain", "with, comma", "say \"hi\"", NA, "", "café ≥ 65"),
+                   num = c(1 / 3, 0.1, NA, NaN, -2e10, 1e-20),
+                   int = c(1L, NA, 3L, 4L, 5L, 6L),
+                   flag = c(TRUE, NA, FALSE, TRUE, FALSE, TRUE))
+  saveREACTtable(df, outpath = dir, filename = "out")
+  expect_identical(read.csv(file.path(dir, "out.csv"), encoding = "UTF-8"), df)
+})
+
+test_that("CSV exports write UTF-8 bytes unchanged under a C locale", {
+  skip_on_os("windows")
+  dir <- withr::local_tempdir()
+  # "café" as unmarked UTF-8 bytes, as R holds it in a C locale; enc2utf8() would escape it.
+  cafe <- rawToChar(as.raw(c(0x63, 0x61, 0x66, 0xc3, 0xa9)))
+  withr::local_locale(c(LC_CTYPE = "C"))
+  saveREACTtable(data.frame(x = cafe), outpath = dir, filename = "c")
+  expect_identical(readBin(file.path(dir, "c.csv"), "raw", 100),
+                   c(charToRaw("\"x\"\n\""), charToRaw(cafe), charToRaw("\"\n")))
+})
+
+test_that("base reshaping helpers give the tidyr and stringr layouts they replace", {
+  long <- data.frame(id = c("a", "a", "b", "c"), key = c("x", "y", "x", "y"), v = 1:4,
+                     w = c("p", "q", "r", "s"))
+  wide <- OverReact:::.react_pivot_wider(long, "id", "key", "v")
+  expect_identical(wide, data.frame(id = c("a", "b", "c"), x = c(1L, 3L, NA), y = c(2L, NA, 4L)))
+  both <- OverReact:::.react_pivot_wider(long, "id", "key", c("v", "w"))
+  expect_named(both, c("id", "v_x", "v_y", "w_x", "w_y"))
+  expect_identical(both$w_y, c("q", NA, "s"))
+
+  expect_identical(OverReact:::.react_pivot_longer(wide, c("x", "y")),
+                   data.frame(id = rep(c("a", "b", "c"), each = 2), name = rep(c("x", "y"), 3),
+                              value = c(1L, 2L, 3L, NA, NA, 4L)))
+
+  words <- c("COVID confirmed by test", "No COVID", "", "trailing ", NA)
+  expect_identical(OverReact:::.react_word(words, 1), c("COVID", "No", "", "trailing", NA))
+  expect_identical(OverReact:::.react_word(words, -1), c("test", "COVID", "", "", NA))
+  expect_identical(OverReact:::.react_word("one", 2), NA_character_)
+})
+
+test_that("Excel workbooks get valid, unique sheet names", {
+  skip_if_not_installed("openxlsx")
+  dir <- withr::local_tempdir()
   expect_error(savePrettyExcelWorkbook(NULL, outpath = dir), "named list of tables")
   long <- paste0(strrep("a", 30), c("_one", "_two"))
   savePrettyExcelWorkbook(setNames(list(data.frame(v = 1), data.frame(v = 2)), long),

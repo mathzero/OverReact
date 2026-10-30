@@ -46,11 +46,48 @@
   out
 }
 
+# A CSV laid out as write.csv() writes it, without row names. Strings go out as UTF-8
+# bytes, so non-ASCII labels survive batch jobs that run in a C locale, and numbers in
+# the shortest form that reads back exactly, so checkpoints restore unchanged.
+.react_write_csv <- function(df, path) {
+  df <- as.data.frame(df, stringsAsFactors = FALSE)
+  field <- function(x, quote) {
+    missing <- is.na(x)
+    if (is.numeric(x)) missing <- missing & !is.nan(x)
+    text <- as.character(x)
+    if (is.double(x)) {
+      for (digits in 16:17) {
+        inexact <- is.finite(x) & suppressWarnings(as.numeric(text)) != x
+        inexact[is.na(inexact)] <- FALSE
+        text[inexact] <- sprintf(paste0("%.", digits, "g"), x[inexact])
+      }
+    }
+    # Only text known to be in another encoding is converted: strings marked latin1, and
+    # unmarked strings in a Latin-1 locale. Unmarked strings in a C locale usually hold
+    # UTF-8 already, which enc2utf8() would escape. As bytes, the text is then joined and
+    # written without any translation.
+    recode <- Encoding(text) == "latin1" |
+      (Encoding(text) == "unknown" & isTRUE(l10n_info()[["Latin-1"]]))
+    text[recode] <- enc2utf8(text[recode])
+    Encoding(text) <- "bytes"
+    if (quote) text <- paste0("\"", gsub("\"", "\"\"", text, fixed = TRUE), "\"")
+    text[missing] <- "NA"
+    text
+  }
+  cols <- lapply(df, function(col) field(col, is.character(col) || is.factor(col)))
+  lines <- paste(field(names(df), TRUE), collapse = ",")
+  if (nrow(df)) lines <- c(lines, do.call(paste, c(unname(cols), sep = ",")))
+  con <- file(path, open = "wb")
+  on.exit(close(con))
+  writeLines(lines, con, useBytes = TRUE)
+  invisible(path)
+}
+
 saveREACTtable <- function(tab,outpath,filename,save_rds=FALSE){
   if(save_rds){
     saveRDS(tab, .react_out_path(outpath, filename, ".rds"))
   }
-  readr::write_csv(.react_as_export_df(tab), .react_out_path(outpath, filename, ".csv"))
+  .react_write_csv(.react_as_export_df(tab), .react_out_path(outpath, filename, ".csv"))
 }
 
 
@@ -111,6 +148,10 @@ saveREACT <- function(file,figpath,outpath,filename, width=8,height=5){
 # one named sheet per table
 savePrettyExcelWorkbook <- function(listOfTables=NULL, workbookName = "myworkbook", outpath=NULL,
                                     noDecimalsColumns=NULL, numFmt = "0.00"){
+  if(!requireNamespace("openxlsx", quietly = TRUE)){
+    stop("savePrettyExcelWorkbook() needs the openxlsx package. Install it, or save ",
+         "tables as CSV with saveREACTtable().")
+  }
 
   # A data frame is itself a list, so check for one before treating the input as a list.
   if(is.data.frame(listOfTables)){

@@ -312,7 +312,7 @@ makeXtabPlottable <- function(myxtab,
                               lookahead= "\\%",
                               return_numeric=TRUE)
   if(pivot_for_plotting){
-    myxtab=tidyr::pivot_longer(data = myxtab, cols = dplyr::all_of(names(myxtab)[perc_cols])) %>%
+    myxtab=dplyr::as_tibble(.react_pivot_longer(myxtab, cols = names(myxtab)[perc_cols])) %>%
       dplyr::select(dplyr::any_of(c("Variable", "Category")), name, value)
   }
   return(myxtab)

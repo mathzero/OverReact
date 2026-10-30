@@ -3,7 +3,7 @@
 #───────────────────────────────────────────────────────────────────────────────
 # Requires:
 #   * ymods$vif_output        – the tidy‑frame produced by the updated code
-#   * ggplot2, dplyr, ggforce – plus OverReact if you want the same colour theme
+#   * ggplot2, dplyr – plus OverReact if you want the same colour theme
 #   * extrafont (optional)    – fonts are loaded exactly as in your forest plot
 #───────────────────────────────────────────────────────────────────────────────
 #
@@ -62,11 +62,10 @@ plotReactVIF <- function(vif_df,
     ggplot2::geom_point(size = 1) +
     ggplot2::scale_x_continuous(breaks = adjustment_numbers) +
     # OverReact::scale_color_imperial(palette = palette) +
-    ggforce::facet_col(ggplot2::vars(Variable),
-                       scales = "fixed",
-                       space  = "free",
-                       shrink = TRUE,
-                       drop   = TRUE) +
+    ggplot2::facet_wrap(ggplot2::vars(Variable),
+                        ncol   = 1,
+                        scales = "fixed",
+                        drop   = TRUE) +
     theme_react(strip_text_size = strip_text_size) +
     ggplot2::labs(x     = "Number of covariates in model",
                   y     = "Variance inflation factor",
@@ -573,7 +572,6 @@ plotReactForest <- function(univ_df_plot,
                             estimate_digits = NULL) {
   if (!requireNamespace("dplyr", quietly = TRUE)) stop("Please install dplyr.")
   if (!requireNamespace("ggplot2", quietly = TRUE)) stop("Please install ggplot2.")
-  if (!requireNamespace("ggforce", quietly = TRUE)) stop("Please install ggforce.")
   if (!requireNamespace("MASS", quietly = TRUE)) stop("Please install MASS.")
 
   effect <- match.arg(effect)
@@ -814,11 +812,12 @@ plotReactForest <- function(univ_df_plot,
     ) +
     ggplot2::coord_flip(ylim = xrange, clip = if (isTRUE(show_estimates)) "off" else "on") +
     ggplot2::scale_shape_manual(values = c(light = 0, dark = 15), guide = "none") +
-    ggforce::facet_col(
+    # One column, each panel as tall as its number of categories.
+    ggplot2::facet_wrap(
       facets = ggplot2::vars(Variable),
+      ncol = 1,
       scales = "free_y",
-      space = "free",
-      shrink = TRUE,
+      space = "free_y",
       drop = TRUE
     ) +
     ggplot2::scale_x_discrete(

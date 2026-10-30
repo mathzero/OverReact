@@ -208,6 +208,10 @@ ModelMakerMulti <- function(dat,
   if (is.null(ncores) || ncores < 2L) {
     message("Running sequentially ...")
     results <- lapply(list_of_variables_of_interest, single_var_runner)
+  } else if (!requireNamespace("future", quietly = TRUE) ||
+             !requireNamespace("future.apply", quietly = TRUE)) {
+    message("future/future.apply not available; running sequentially.")
+    results <- lapply(list_of_variables_of_interest, single_var_runner)
   } else {
     workers <- min(as.integer(ncores), future::availableCores())
     message(sprintf("Running in parallel on %d cores ...", workers))

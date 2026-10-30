@@ -528,7 +528,7 @@ compute_level_order <- function(x, ref_level = NULL) {
 }
 
 .atomic_write_csv <- function(df, path) {
-  .atomic_write(path, function(tmp) readr::write_csv(df, tmp))
+  .atomic_write(path, function(tmp) .react_write_csv(df, tmp))
 }
 
 .atomic_write_rds <- function(obj, path) {
@@ -537,10 +537,10 @@ compute_level_order <- function(x, ref_level = NULL) {
 
 .robust_read_csv <- function(path) {
   if (!file.exists(path)) return(data.frame())
-  out <- tryCatch({
-    if (requireNamespace("readr", quietly = TRUE)) suppressWarnings(readr::read_csv(path, show_col_types = FALSE, progress = FALSE))
-    else utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
-  }, error = function(e) data.frame())
+  out <- tryCatch(
+    utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE, encoding = "UTF-8"),
+    error = function(e) data.frame()
+  )
   as.data.frame(out, stringsAsFactors = FALSE)
 }
 
@@ -554,8 +554,11 @@ compute_level_order <- function(x, ref_level = NULL) {
   if (!nrow(df)) return(df)
   to_char <- intersect(c("Level","Category","term_raw","model","model_family","measure","outcome_level","adjustment_label","stage","adjusted_vars","status","error_msg","warnings","separation_msg"), names(df))
   for (nm in to_char) df[[nm]] <- as.character(df[[nm]])
-  # CSV readers turn the crude model's empty adjuster list into NA.
-  if ("adjusted_vars" %in% names(df)) df$adjusted_vars[is.na(df$adjusted_vars)] <- ""
+  # CSV readers turn empty strings into NA: the crude model's empty adjuster list, and
+  # diagnostics messages, which reports count with nzchar() (TRUE for NA).
+  for (nm in intersect(c("adjusted_vars", "error_msg", "warnings", "separation_msg"), names(df))) {
+    df[[nm]][is.na(df[[nm]])] <- ""
+  }
   if (startsWith(kind, "plot_")) {
     if ("adjustment" %in% names(df)) df$adjustment <- suppressWarnings(as.integer(df$adjustment))
     num_cols <- c(toupper(sub("^plot_", "", kind)), "Lower", "Upper", "P_value", "Q_value")

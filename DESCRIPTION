@@ -17,31 +17,27 @@ Depends:
 Suggests:
     data.table,
     flextable,
+    future,
+    future.apply,
     gt,
     knitr,
     nnet,
+    openxlsx,
     rmarkdown,
     sandwich,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr
 Imports:
     dplyr,
-    ggforce,
-    ggplot2 (>= 3.5.0),
+    ggplot2 (>= 4.0.0),
     grDevices,
     MASS,
     methods,
     mgcv,
-    openxlsx,
-    readr,
     rlang (>= 1.0.0),
     scales,
     stats,
-    stringr,
-    tidyr,
     tools,
     utils,
-    withr,
-    future,
-    future.apply
+    withr
 Config/testthat/edition: 3

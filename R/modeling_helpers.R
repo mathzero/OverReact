@@ -578,12 +578,8 @@
 
   # Multinomial rows are also identified by their outcome level.
   id_cols <- c(intersect("outcome_level", names(long_df)), "Level")
-  wide <- tidyr::pivot_wider(
-    long_df[, c(id_cols, "row_order", "wide_col", "value_formatted"), drop = FALSE],
-    names_from = "wide_col",
-    values_from = "value_formatted"
-  )
-  wide <- as.data.frame(wide, stringsAsFactors = FALSE)
+  wide <- .react_pivot_wider(long_df, id_cols = c(id_cols, "row_order"),
+                             names_from = "wide_col", values_from = "value_formatted")
   wide <- wide[order(wide$row_order), , drop = FALSE]
   wide$row_order <- NULL
 

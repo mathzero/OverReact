@@ -379,10 +379,13 @@ test_that("checkpoints never return an earlier run's table, and CSV copies resto
   expect_null(reused$df_output_RRs)
 
   binary <- run("y_bin")
-  unlink(file.path(savepath, "runs", "cat", "plot_rr.rds"))
+  unlink(file.path(savepath, "runs", "cat", c("plot_rr.rds", "diagnostics.rds")))
   restored <- run("y_bin")
   expect_equal(restored$plot_output_RRs, binary$plot_output_RRs)
   expect_equal(restored$plot_output, binary$plot_output)
+  # Empty messages come back as "", not NA, which nzchar() would count as a flag.
+  expect_equal(restored$diagnostics, binary$diagnostics)
+  expect_false(anyNA(restored$diagnostics$separation_msg))
 })
 
 test_that("a predictor that is also an adjuster keeps the shared stage numbers", {
