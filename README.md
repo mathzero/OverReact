@@ -145,7 +145,7 @@ See [the table documentation](man/tableOne.Rd) and
 | `modelMakerSequential()` | Fit one predictor with sequential adjustment. Returns `model_df`, `model_df_predictorORs_only`, `crude_model_output`, `adj_model_outputs` and diagnostics. |
 | `modelMakerSequentialRD()` | Fit one predictor with cumulative adjustment and optional risk differences and ratios. Returns separate coefficient, RD and RR tables, crude and adjusted results, diagnostics and sample counts. |
 | `modelMakerAdjustedSetsRD()` | Fit one predictor using named `adj_sets`. Returns `model_df_ORs`, `model_df_RDs`, `model_df_RRs`, the matching `crude_model_*` and `adj_*_outputs` tables, `diagnostics`, the `family` and `measure`, and sample counts. |
-| `makeORTable()` | Extract coefficients, 95% Wald intervals and p-values from a fitted `glm`, `lm`, `gam`, `polr` or `multinom` model. Logit-link coefficients are exponentiated to odds ratios and log-link coefficients to risk or rate ratios; other links keep their original scale. The `measure` column says which (`OR`, `RR`, `IRR`, `Beta` or `Coef`). Optional reference rows and term metadata are included; `dp = NULL` returns unrounded estimates. |
+| `makeORTable()` | Extract coefficients, 95% Wald intervals and p-values from a fitted `glm`, `lm`, `gam`, `polr`, `multinom` or `coxph` model. Logit-link coefficients are exponentiated to odds ratios, log-link coefficients to risk or rate ratios and Cox coefficients to hazard ratios; other links keep their original scale. The `measure` column says which (`OR`, `RR`, `IRR`, `HR`, `Beta` or `Coef`). Optional reference rows and term metadata are included; `dp = NULL` returns unrounded estimates. |
 | `makeRDTable()` | Estimate marginal risk differences for a factor or numeric predictor in a binomial model, as described below. Returns `Level`, `RD`, `Lower`, `Upper` and `P_value`; intervals use the delta method, or coefficient simulation with `ci_method = "simulation"`. |
 | `makeRRTable()` | Estimate marginal risk ratios in the same way, returning `Level`, `RR`, `Lower`, `Upper` and `P_value`. |
 | `safe_makeRDTable()` | Wrap `makeRDTable()` with error capture and an explicit reference row for factor predictors. Returns `NULL` on a caught error. |
@@ -164,11 +164,13 @@ reports one effect measure, and estimate columns are named after it.
 | `"modified_poisson"` | Poisson regression of a binary outcome with HC0 sandwich standard errors | `RR` |
 | `"ordinal"` | Proportional-odds model (`MASS::polr()`) | `OR` |
 | `"multinomial"` | Multinomial logit (`nnet::multinom()`); one block of rows per non-reference outcome level | `OR` |
+| `"cox"` | Cox proportional hazards model (`survival::coxph()`, Efron ties). The outcome is the event indicator; `time` names the follow-up time column, or start and stop columns for delayed entry or time-varying covariates | `HR` |
 
-`family = "auto"` (the default) chooses binomial for two distinct values,
-ordinal for an ordered factor, multinomial for another categorical outcome with
-three or more levels, and Gaussian otherwise. Encode binary outcomes as 0/1,
-logical values or a two-level factor; other two-value codings (such as 1/2), and
+`family = "auto"` (the default) chooses Cox when `time` is supplied, binomial for
+two distinct values, ordinal for an ordered factor, multinomial for another
+categorical outcome with three or more levels, and Gaussian otherwise. Encode
+binary outcomes and event indicators as 0/1, logical values or a two-level factor
+(the second level is the event); other two-value codings (such as 1/2), and
 outcomes that do not suit an explicitly chosen family, raise an error before any
 model is fitted. Character predictors and adjusters are converted to
 factors, and ordered factors are treated as unordered, so every level is compared
@@ -204,6 +206,20 @@ rr_models <- ModelMakerMultiRD(
   include_rr = TRUE,
   ncores = 1
 )
+
+# Hazard ratios from Cox models: the outcome is the event indicator, and `time`
+# names the follow-up time (or start and stop columns).
+clinical$followup_days <- round(rexp(n, 1 / 300)) + 1
+clinical$admitted <- rbinom(n, 1, 0.3)
+hr_models <- ModelMakerMultiRD(
+  dat = clinical,
+  list_of_variables_of_interest = c("vaccinated", "sex"),
+  outcome = "admitted",
+  time = "followup_days",
+  joint_adjustment_vars = "age",
+  ncores = 1
+)
+hr_models$diagnostics[, c("Variable", "stage", "events", "ph_p_value")]
 ```
 
 With `incremental = TRUE`, adjusters enter cumulatively in the order supplied
@@ -230,7 +246,7 @@ estimation as well as labelling.
 | `df_output_RDs` | Formatted risk-difference tables; `NULL` when unavailable. |
 | `plot_output_RDs` | Numeric risk differences and intervals; `NULL` when unavailable. |
 | `df_output_RRs`, `plot_output_RRs` | Formatted and numeric marginal risk ratios with `include_rr = TRUE`; `NULL` when unavailable. |
-| `diagnostics` | Stage, adjustment variables, status, errors, captured warnings, sample size, covariance validity, separation flags and attempt number. |
+| `diagnostics` | Stage, adjustment variables, status, errors, captured warnings, sample size, covariance validity, separation flags and attempt number. Cox models add the number of `events` and `cox.zph()` proportional-hazards p-values for the predictor (`ph_p_value`) and the whole model (`ph_global_p_value`); their separation flag lists predictor levels with no events. |
 
 `Q_value` holds multiple-testing adjusted p-values: Benjamini–Hochberg by
 default, or any `stats::p.adjust()` method through `p_adjust_method`, applied
@@ -345,7 +361,8 @@ logical, or numeric with at most `outcome_cat_unique_threshold` distinct values
 (default 6). This rule controls table layout, independently of the regression
 `family`, which is passed to `ModelMakerMultiRD()`. `include_rd` defaults to
 `FALSE`; supplying `NULL` enables automatic selection for binary outcomes, and
-`include_rr = TRUE` adds marginal risk ratios. Each report line also shows a
+`include_rr = TRUE` adds marginal risk ratios. For Cox models, pass `time`; the
+report then counts proportional-hazards tests with p < 0.05. Each report line also shows a
 q-value, adjusted over all the tests that section ranks (every level of each
 predictor's most-adjusted model); `p_adjust_method = NULL` omits them. The report ranks associations by p-value,
 selecting one category per predictor from that predictor's most-adjusted model;

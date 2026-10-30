@@ -23,6 +23,16 @@
   (`cat_test`, `cont_test` override), records them in a `"tests"` attribute,
   and adds standardised mean differences with `smd = TRUE`.
 * `tableOneDisplay()` renders `tableOne()` results as flextable or gt tables.
+* Cox proportional hazards models, with `family = "cox"` (or by supplying `time`
+  with `family = "auto"`) in every modelling wrapper and in
+  `run_auto_tableone_regressions()`. The outcome is the event indicator, and
+  `time` names the follow-up time, or start and stop columns for delayed entry
+  or time-varying covariates. Estimates are hazard ratios (`HR`). Diagnostics
+  add the number of events, `cox.zph()` proportional-hazards p-values and
+  predictor levels with no events, and the automated report counts
+  proportional-hazards violations. `makeORTable()` and `plotReactForest()`
+  accept fitted `coxph` models. Cox models need the survival package, which
+  ships with R.
 * Batch plotting outputs gain a `Q_value` column: Benjamini-Hochberg (or any
   `p_adjust_method`) adjusted p-values within each adjustment stage, across all
   predictors and levels. The automated report shows q-values for the tests it

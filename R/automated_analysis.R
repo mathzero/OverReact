@@ -36,6 +36,7 @@ run_auto_tableone_regressions <- function(
     include_rd = FALSE,              # NULL: TRUE for binary outcomes, else FALSE
     include_rr = FALSE,              # marginal risk ratios (binary outcomes)
     family = "auto",                 # model family; see ModelMakerMultiRD()
+    time = NULL,                     # follow-up time column(s), for Cox models
     p_adjust_method = "BH",          # q-values (p.adjust method); NULL or "none" for none
     ncores = NULL,
     n_sim = 100,
@@ -82,7 +83,8 @@ run_auto_tableone_regressions <- function(
   coalesce_chr <- function(x, y) ifelse(is.na(x) | x == "", y, x)
 
   # Determine the model family; marginal effects need a binary outcome
-  spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome)
+  spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome, time = time)
+  .react_check_time(time, spec, dat)
   if (is.null(include_rd)) include_rd <- isTRUE(spec$binary)
   # What the report describes: requests for other outcomes are skipped by the models.
   rd_estimated <- isTRUE(include_rd) && isTRUE(spec$binary)
@@ -130,6 +132,7 @@ run_auto_tableone_regressions <- function(
     include_rd                  = include_rd,
     include_rr                  = include_rr,
     family                      = spec$name,
+    time                        = time,
     p_adjust_method             = p_adjust_method,
     n_sim                       = n_sim,
     rd_ci_method                = match.arg(rd_ci_method),
@@ -228,6 +231,7 @@ run_auto_tableone_regressions <- function(
     "",
     sprintf("**Outcome**: %s", outcome),
     sprintf("**Family**: %s", fam_lab),
+    if (!is.null(time)) sprintf("**Follow-up time**: %s", paste(time, collapse = " to ")),
     sprintf("**N (total)**: %d; **N (non-missing outcome)**: %d", n_total, n_y_obs),
     sprintf("**Independent variables analysed**: %d", length(independent_variables)),
     sprintf("**Covariates (adjusted)**: %s", ifelse(length(covariates), paste(covariates, collapse = ", "), "(none)")),
@@ -238,10 +242,10 @@ run_auto_tableone_regressions <- function(
     ""
   )
 
-  # Model-estimate section (OR, RR, IRR or Beta), then marginal RDs and RRs
+  # Model-estimate section (OR, RR, IRR, HR or Beta), then marginal RDs and RRs
   top_model <- top_rows(mm$plot_output)
   if (!is.null(top_model) && nrow(top_model)) {
-    effect_name <- intersect(c("OR", "RR", "IRR", "Beta"), names(top_model))[1]
+    effect_name <- intersect(c("OR", "RR", "IRR", "HR", "Beta"), names(top_model))[1]
     lines <- c(lines, sprintf("## Top %d associations by adjusted p-value (%s)", nrow(top_model), effect_name), "",
                bullets(top_model, effect_name, 2), "")
   }
@@ -257,11 +261,18 @@ run_auto_tableone_regressions <- function(
   if (!is.null(diag_df) && nrow(diag_df)) {
     n_err <- sum(diag_df$status %in% c("error","failed"), na.rm = TRUE)
     n_sep <- sum(nzchar(diag_df$separation_msg %||% ""), na.rm = TRUE)
-    if (n_err + n_sep > 0) {
+    # Cox models: cox.zph() tests of proportional hazards for each model's predictor.
+    ph_p <- diag_df$ph_p_value %||% numeric()
+    n_ph <- sum(ph_p < 0.05, na.rm = TRUE)
+    if (n_err + n_sep + n_ph > 0) {
+      sep_label <- if (identical(spec$name, "cox")) "Levels with no events" else "Perfect/near separation flags"
       lines <- c(lines,
                  "## Model diagnostics (summary)",
                  sprintf("- Fits with errors: %d", n_err),
-                 sprintf("- Perfect/near separation flags: %d", n_sep),
+                 sprintf("- %s: %d", sep_label, n_sep),
+                 if (identical(spec$name, "cox")) {
+                   sprintf("- Proportional-hazards tests with p < 0.05: %d of %d models", n_ph, sum(!is.na(ph_p)))
+                 },
                  "")
     }
   }

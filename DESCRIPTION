@@ -25,6 +25,7 @@ Suggests:
     openxlsx,
     rmarkdown,
     sandwich,
+    survival,
     testthat (>= 3.0.0)
 VignetteBuilder: knitr
 Imports:

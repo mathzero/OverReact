@@ -123,12 +123,12 @@ plotReactVIF <- function(vif_df,
 }
 
 
-.react_detect_effect <- function(df, effect = c("auto", "OR", "RR", "IRR", "Beta", "RD")) {
+.react_detect_effect <- function(df, effect = c("auto", "OR", "RR", "IRR", "HR", "Beta", "RD")) {
   effect <- match.arg(effect)
-  available <- intersect(c("OR", "RR", "IRR", "Beta", "RD"), names(df))
+  available <- intersect(c("OR", "RR", "IRR", "HR", "Beta", "RD"), names(df))
 
   if (!length(available)) {
-    stop("Could not find an effect column. Expected one of: OR, RR, IRR, Beta, RD.")
+    stop("Could not find an effect column. Expected one of: OR, RR, IRR, HR, Beta, RD.")
   }
 
   if (effect != "auto") {
@@ -216,7 +216,7 @@ plotReactVIF <- function(vif_df,
 
 
 .react_standardise_plot_df <- function(df,
-                                       effect = c("auto", "OR", "RR", "IRR", "Beta", "RD"),
+                                       effect = c("auto", "OR", "RR", "IRR", "HR", "Beta", "RD"),
                                        variables = NULL,
                                        adjustment_labels = NULL,
                                        include_reference = TRUE) {
@@ -301,8 +301,8 @@ plotReactVIF <- function(vif_df,
                                     name_fun = NULL,
                                     auto_pretty = TRUE,
                                     include_reference = TRUE) {
-  if (!inherits(model, c("lm", "glm", "gam"))) {
-    stop("Models passed to plotReactForest() must inherit from lm, glm, or gam.")
+  if (!inherits(model, c("lm", "glm", "gam", "coxph"))) {
+    stop("Models passed to plotReactForest() must inherit from lm, glm, gam or coxph.")
   }
 
   coef_tab <- as.data.frame(makeORTable(model, ref_level = NULL, dp = NULL), stringsAsFactors = FALSE)
@@ -418,7 +418,7 @@ plotReactVIF <- function(vif_df,
   out <- do.call(rbind, out_list)
   rownames(out) <- NULL
 
-  # Exponentiated measures (OR, RR, IRR) plot on a ratio scale; anything else as Beta.
+  # Exponentiated measures (OR, RR, IRR, HR) plot on a ratio scale; anything else as Beta.
   effect_name <- .react_model_measure(model)
   if (!effect_name %in% .react_ratio_measures) effect_name <- "Beta"
 
@@ -446,7 +446,7 @@ plotReactVIF <- function(vif_df,
 
 
 .react_coerce_forest_input <- function(x,
-                                       effect = c("auto", "OR", "RR", "IRR", "Beta", "RD"),
+                                       effect = c("auto", "OR", "RR", "IRR", "HR", "Beta", "RD"),
                                        variables = NULL,
                                        adjustment_labels = NULL,
                                        name_fun = NULL,
@@ -464,7 +464,7 @@ plotReactVIF <- function(vif_df,
     ))
   }
 
-  if (inherits(x, c("lm", "glm", "gam"))) {
+  if (inherits(x, c("lm", "glm", "gam", "coxph"))) {
     out <- .react_model_to_plot_df(
       x,
       variables = variables,
@@ -477,9 +477,9 @@ plotReactVIF <- function(vif_df,
     return(out)
   }
 
-  if (is.list(x) && any(vapply(x, inherits, logical(1), what = c("lm", "glm", "gam")))) {
-    if (!all(vapply(x, function(z) inherits(z, c("lm", "glm", "gam")), logical(1)))) {
-      stop("Model lists supplied to plotReactForest() must contain only lm/glm/gam objects.")
+  if (is.list(x) && any(vapply(x, inherits, logical(1), what = c("lm", "glm", "gam", "coxph")))) {
+    if (!all(vapply(x, function(z) inherits(z, c("lm", "glm", "gam", "coxph")), logical(1)))) {
+      stop("Model lists supplied to plotReactForest() must contain only lm, glm, gam or coxph objects.")
     }
 
     model_labels <- names(x)
@@ -559,7 +559,7 @@ plotReactForest <- function(univ_df_plot,
                             strip_text_size = 8,
                             arrangeByOR = FALSE,
                             variables = NULL,
-                            effect = c("auto", "OR", "RR", "IRR", "Beta", "RD"),
+                            effect = c("auto", "OR", "RR", "IRR", "HR", "Beta", "RD"),
                             include_reference = TRUE,
                             name_fun = NULL,
                             auto_pretty = TRUE,
@@ -599,6 +599,7 @@ plotReactForest <- function(univ_df_plot,
                    OR = "Odds ratio",
                    RR = "Risk ratio",
                    IRR = "Incidence rate ratio",
+                   HR = "Hazard ratio",
                    Beta = "Beta coefficient",
                    RD = "Risk difference",
                    effect_name)
