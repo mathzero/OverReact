@@ -115,3 +115,16 @@
 * GitHub Actions run `R CMD check` on push and pull request.
 * The Quarto demo notebook is now the package vignette, `vignette("OverReact")`,
   updated for the current interface.
+* Fewer dependencies, so the package installs from an offline bundle in the
+  REACT enclave: ggforce, readr, stringr and tidyr are replaced by base R and
+  ggplot2, and openxlsx, future and future.apply are optional (Suggests). The
+  dependency tree falls from 54 packages to 25. Outputs are unchanged.
+  `savePrettyExcelWorkbook()` needs openxlsx, and `ncores > 1` needs future and
+  future.apply; without them, runs are sequential. ggplot2 4.0.0 or later is now
+  required.
+* `inst/enclave/make_bundle.R` builds that offline bundle, with checksums and an
+  installer; `inst/ENCLAVE_INSTALL.md` explains it.
+* CSV files are written as UTF-8 even in a C locale, with numbers in the
+  shortest form that reads back exactly.
+* Diagnostics restored from checkpoint CSV files keep empty messages as `""`
+  rather than `NA`, which the automated report counted as separation flags.

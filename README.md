@@ -16,6 +16,11 @@ remotes::install_github("mathzero/OverReact", ref = "dev")
 library(OverReact)
 ```
 
+In the REACT enclave, which has no internet, install from an offline bundle
+instead: [`inst/ENCLAVE_INSTALL.md`](inst/ENCLAVE_INSTALL.md) explains how to
+build, transfer and install one. Excel export needs the optional openxlsx
+package, and parallel runs need future and future.apply.
+
 Specify analysis data, outcomes and adjustment variables explicitly. Data
 arguments have no defaults; some outcome and adjuster defaults still use
 REACT-specific variable names.
@@ -257,8 +262,8 @@ requires additional assumptions. Marginal effects need a binary outcome (the
 binomial, log-binomial and modified Poisson families) and are skipped otherwise;
 `include_rd = FALSE` disables risk differences.
 
-`ncores = NULL` or `1` runs sequentially. Larger values request a `future`
-backend. `ModelMakerMultiRD()` can retry incomplete results with revised GLM
+`ncores = NULL` or `1` runs sequentially. Larger values run in parallel with the
+optional future and future.apply packages; without them, the run is sequential. `ModelMakerMultiRD()` can retry incomplete results with revised GLM
 controls and recover from parallel failures. Supplying `savepath` writes
 aggregate CSV/RDS results and per-predictor checkpoints under `runs/`. Each
 checkpoint stores a fingerprint of the model specification and the predictor's
@@ -431,7 +436,7 @@ and [numeric formatting](R/specify_decimal.R).
 | `saveREACTtable()` | Write a table as CSV, with optional RDS via `save_rds = TRUE`. |
 | `saveREACTplot()` | Save a plot in requested `filetypes` (default PNG), with an additional PDF by default. Dimensions are in inches; raster resolution is 300 dpi. PDF export retries with Cairo if standard export fails. |
 | `saveREACT()` | Dispatch plots to figure export, tables/matrices to CSV, and other objects to RDS. |
-| `savePrettyExcelWorkbook()` | Write a named list of tables to a styled XLSX workbook, one sheet per table, with category separators and numeric formatting. Existing workbooks are overwritten. |
+| `savePrettyExcelWorkbook()` | Write a named list of tables to a styled XLSX workbook, one sheet per table, with category separators and numeric formatting. Existing workbooks are overwritten. Needs the openxlsx package. |
 
 ```r
 results_dir <- file.path(tempdir(), "overreact-example")
