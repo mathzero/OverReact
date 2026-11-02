@@ -237,14 +237,18 @@ stratifiedTables <- function(dat,
                                                                           Category,prev_concat) %>%
       dplyr::mutate(Level = factor(Level, levels = unique(Level))) %>%
       arrange(Level) %>%
-      tidyr::pivot_wider(names_from = Level, id_cols = c(Variable,Category),values_from=c(Positive, Total,prev_concat))
+      .react_pivot_wider(id_cols = c("Variable", "Category"), names_from = "Level",
+                         values_from = c("Positive", "Total", "prev_concat")) %>%
+      dplyr::as_tibble()
 
   }else{
     res <- dplyr::bind_rows(result_list, .id = "Level") %>% dplyr::select(Level, Variable,
                                                                           Category,prev_concat) %>%
       dplyr::mutate(Level = factor(Level, levels = unique(Level))) %>%
       arrange(Level) %>%
-      tidyr::pivot_wider(names_from = Level, id_cols = c(Variable,Category),values_from=prev_concat)
+      .react_pivot_wider(id_cols = c("Variable", "Category"), names_from = "Level",
+                         values_from = "prev_concat") %>%
+      dplyr::as_tibble()
 
   }
 
@@ -303,7 +307,7 @@ add_conf_ints <- function(tab,method="wilson",poscol="Detected",negcol="Not Dete
 
 makeStratifiedPrevalenceTablePlottable <- function(tab){
   pivot_cols=setdiff(colnames(tab), c("Variable", "Category"))
-  tab_pivot=tidyr::pivot_longer(data = tab, cols=pivot_cols)
+  tab_pivot=dplyr::as_tibble(.react_pivot_longer(tab, cols = pivot_cols))
   tab_pivot$prev <- as.numeric(gsub(" [(].*", "",tab_pivot$value))
   tab_pivot$lower <- xtabPercentageExtractor(mystring = tab_pivot$value,lookbehind = "[(]",
                                              lookahead = "[,]",return_numeric = TRUE)
@@ -327,14 +331,14 @@ orderMyTable <-  function(tab){
     tab$Category <-  tab$Level
   }
   # define some common lists of categories #
-  freqs=stringr::word(c("All the time","Some of the time","Hardly ever","Never","Don't know"),1)
-  ynpns=stringr::word(c("Yes", "No", "Prefer not to say"),1)
-  yn=stringr::word(c("Yes", "No"),1)
-  fags = stringr::word(c("Current cigarette smoker","Not current cigarette smoker","Prefer not to say"),1)
-  vapes = stringr::word(c("Current vaper","Not current vaper","Prefer not to say"),1)
-  covid = stringr::word(c("COVID confirmed by test","COVID suspected by doctor",
+  freqs=.react_word(c("All the time","Some of the time","Hardly ever","Never","Don't know"),1)
+  ynpns=.react_word(c("Yes", "No", "Prefer not to say"),1)
+  yn=.react_word(c("Yes", "No"),1)
+  fags = .react_word(c("Current cigarette smoker","Not current cigarette smoker","Prefer not to say"),1)
+  vapes = .react_word(c("Current vaper","Not current vaper","Prefer not to say"),1)
+  covid = .react_word(c("COVID confirmed by test","COVID suspected by doctor",
                           "COVID suspected by respondent","No COVID"),-1)
-  adiposity = stringr::word(c("Underweight","Normal weight","Overweight", "Obese"),1)
+  adiposity = .react_word(c("Underweight","Normal weight","Overweight", "Obese"),1)
 
   catslist=c(freqs,ynpns,yn, fags, vapes, covid)
   # done #
@@ -343,9 +347,9 @@ orderMyTable <-  function(tab){
   for(i in seq_along(unique(tab$Variable))){
     varr=unique(tab$Variable)[[i]]
     df_subset <- tab %>% filter(Variable == varr)
-    levs=stringr::word(unique(df_subset$Category),1)
+    levs=.react_word(unique(df_subset$Category),1)
 
-    mycats = stringr::word(df_subset$Category,1)
+    mycats = .react_word(df_subset$Category,1)
 
     if(grepl("age",tolower(varr)) | grepl("imd",tolower(varr))){
       x <- gsub("^(.*?)[[:punct:]].*","\\1",tab$Category[tab$Variable == varr])
@@ -360,9 +364,9 @@ orderMyTable <-  function(tab){
       out.list[[varr]] <-df_subset[order(match(mycats,fags)),]
     }else if(length(setdiff(levs,vapes))==0){
       out.list[[varr]] <-df_subset[order(match(mycats,vapes)),]
-    }else if(length(setdiff(stringr::word(unique(df_subset$Category),-1),covid))==0){
+    }else if(length(setdiff(.react_word(unique(df_subset$Category),-1),covid))==0){
       # COVID categories are identified, and ordered, by their last word.
-      out.list[[varr]] <-df_subset[order(match(stringr::word(df_subset$Category,-1),
+      out.list[[varr]] <-df_subset[order(match(.react_word(df_subset$Category,-1),
                                                covid)),]
     }else if(length(setdiff(levs,adiposity))==0){
       out.list[[varr]] <-df_subset[order(match(mycats,

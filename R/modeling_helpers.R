@@ -10,14 +10,18 @@
 }
 
 # Formula from term names; `offset` names a column of exposure times entered as
-# offset(log(offset)), as Poisson rate models need.
-.react_reformulate_safe <- function(terms, response = NULL, offset = NULL) {
+# offset(log(offset)), as Poisson rate models need. With `time` (one column, or start and
+# stop), the response is survival::Surv(time, response) for Cox models.
+.react_reformulate_safe <- function(terms, response = NULL, offset = NULL, time = NULL) {
   terms <- unique(terms[nzchar(terms)])
   rhs_terms <- c(vapply(terms, .react_quote_name, character(1)),
                  if (!is.null(offset)) paste0("offset(log(", .react_quote_name(offset), "))"))
   rhs <- if (length(rhs_terms)) paste(rhs_terms, collapse = " + ") else "1"
   if (is.null(response)) {
     stats::as.formula(paste("~", rhs))
+  } else if (!is.null(time)) {
+    surv_args <- vapply(c(time, response), .react_quote_name, character(1))
+    stats::as.formula(paste0("survival::Surv(", paste(surv_args, collapse = ", "), ") ~ ", rhs))
   } else {
     stats::as.formula(paste(.react_quote_name(response), "~", rhs))
   }
@@ -110,7 +114,7 @@
   if (is.null(model_family) || !length(model_family)) {
     model_family <- if (inherits(mod, "polr")) "ordinal" else if (inherits(mod, "multinom")) {
       "multinomial"
-    } else if (inherits(mod, "lm")) "gaussian" else NA_character_
+    } else if (inherits(mod, "coxph")) "cox" else if (inherits(mod, "lm")) "gaussian" else NA_character_
   }
   if (is.null(measure)) measure <- .react_model_measure(mod)
   exponentiate <- measure %in% .react_ratio_measures
@@ -149,6 +153,11 @@
         tab$outcome_level <- k
         tab
       }))
+    } else if (inherits(mod, "coxph")) {
+      # Log hazard ratios; Cox models have no intercept. Aliased terms have no estimate.
+      est <- stats::coef(mod)
+      est <- est[!is.na(est)]
+      wald_table(names(est), est, sqrt(diag(stats::vcov(mod)))[names(est)])
     } else if (!is.null(mod$robust_vcov)) {
       # Robust (sandwich) standard errors, as in modified Poisson models.
       est <- stats::coef(mod)
@@ -396,15 +405,12 @@
   }
 
   separation_msg <- ""
-  if (exists("check_perfect_separation", mode = "function")) {
-    sep_msg <- tryCatch(
-      check_perfect_separation(stage_data, outcome = outcome, predictor = predictor),
-      error = function(e) NULL
-    )
-    if (!is.null(sep_msg)) separation_msg <- sep_msg
-  }
+  sep_check <- if (identical(model_family, "cox")) .react_cox_no_event_levels else check_perfect_separation
+  sep_msg <- tryCatch(sep_check(stage_data, outcome = outcome, predictor = predictor),
+                      error = function(e) NULL)
+  if (!is.null(sep_msg)) separation_msg <- sep_msg
 
-  data.frame(
+  out <- data.frame(
     stage = stage_name,
     adjusted_vars = paste(adjusted_vars, collapse = "+"),
     status = if (!is.null(fit_res$error)) "error" else if (length(fit_res$warnings)) "warning" else "ok",
@@ -417,6 +423,34 @@
     model_family = model_family,
     stringsAsFactors = FALSE
   )
+  if (identical(model_family, "cox")) {
+    # Events in the stage's sample, and cox.zph() tests of proportional hazards for the
+    # predictor and for the model as a whole (small p-values suggest non-proportionality).
+    out$events <- if (outcome %in% names(stage_data)) sum(stage_data[[outcome]] %in% 1L) else NA_integer_
+    zph <- if (inherits(fit_obj, "coxph")) {
+      tryCatch(survival::cox.zph(fit_obj)$table, error = function(e) NULL)
+    }
+    zph_p <- function(row) {
+      if (is.null(zph)) return(NA_real_)
+      hit <- match(row, gsub("`", "", rownames(zph), fixed = TRUE))
+      if (is.na(hit)) NA_real_ else unname(zph[hit, "p"])
+    }
+    out$ph_p_value <- zph_p(predictor)
+    out$ph_global_p_value <- zph_p("GLOBAL")
+  }
+  out
+}
+
+# Factor levels of the predictor with no events, whose hazard ratios are infinite: the
+# Cox analogue of separation. Levels where every row is an event are no problem.
+.react_cox_no_event_levels <- function(data, outcome, predictor) {
+  x <- data[[predictor]]
+  if (is.null(x) || !(is.factor(x) || is.character(x))) return(NULL)
+  events <- tapply(data[[outcome]] %in% 1L, droplevels(factor(x)), sum)
+  empty <- names(events)[events == 0]
+  if (!length(empty)) return(NULL)
+  paste0("No events in ", predictor, " level(s) ", paste(empty, collapse = ", "),
+         ", so their hazard ratios cannot be estimated.")
 }
 
 .react_run_or_stages <- function(data,
@@ -428,17 +462,19 @@
                                  include_intercept = TRUE,
                                  ref_level = NULL,
                                  family = "auto",
-                                 offset = NULL) {
+                                 offset = NULL,
+                                 time = NULL) {
   sample_strategy <- match.arg(sample_strategy)
-  spec <- .react_resolve_family(data[[outcome]], family = family, outcome = outcome)
+  spec <- .react_resolve_family(data[[outcome]], family = family, outcome = outcome, time = time)
   .react_check_offset(offset, spec, data)
+  .react_check_time(time, spec, data)
   data[[outcome]] <- .react_code_outcome(data[[outcome]], spec)
   # Per-model samples can lose outcome levels, so multinomial rows are placed by the
   # outcome's full level set.
   outcome_levels <- if (is.factor(data[[outcome]])) levels(data[[outcome]]) else NULL
 
   used_adjusters <- unique(unlist(lapply(stage_specs, `[[`, "adjusted_vars"), use.names = FALSE))
-  common_vars <- unique(c(outcome, predictor, used_adjusters, offset))
+  common_vars <- unique(c(outcome, predictor, used_adjusters, offset, time))
 
   common_data <- NULL
   if (identical(sample_strategy, "common_per_predictor")) {
@@ -470,7 +506,7 @@
 
   for (i in seq_along(stage_specs)) {
     stage <- stage_specs[[i]]
-    stage_vars <- unique(c(outcome, predictor, stage$adjusted_vars, offset))
+    stage_vars <- unique(c(outcome, predictor, stage$adjusted_vars, offset, time))
     stage_data <- if (identical(sample_strategy, "common_per_predictor")) {
       common_data[, stage_vars, drop = FALSE]
     } else {
@@ -487,7 +523,7 @@
           stage_data[[predictor]] <- stats::relevel(stage_data[[predictor]], ref = predictor_ref)
         }
         formula <- .react_reformulate_safe(c(predictor, stage$adjusted_vars), response = outcome,
-                                           offset = offset)
+                                           offset = offset, time = time)
         fit_res <- .react_fit_model_captured(formula, data = stage_data, spec = spec, control = glm_control)
       }
     }
@@ -578,12 +614,8 @@
 
   # Multinomial rows are also identified by their outcome level.
   id_cols <- c(intersect("outcome_level", names(long_df)), "Level")
-  wide <- tidyr::pivot_wider(
-    long_df[, c(id_cols, "row_order", "wide_col", "value_formatted"), drop = FALSE],
-    names_from = "wide_col",
-    values_from = "value_formatted"
-  )
-  wide <- as.data.frame(wide, stringsAsFactors = FALSE)
+  wide <- .react_pivot_wider(long_df, id_cols = c(id_cols, "row_order"),
+                             names_from = "wide_col", values_from = "value_formatted")
   wide <- wide[order(wide$row_order), , drop = FALSE]
   wide$row_order <- NULL
 

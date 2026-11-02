@@ -248,7 +248,8 @@ modelMakerSequentialRD <- function(variable_name,
                                    rd_ci_method            = c("delta", "simulation"),
                                    include_rr              = FALSE,
                                    family                  = "auto",
-                                   offset                  = NULL) {
+                                   offset                  = NULL,
+                                   time                    = NULL) {
   sample_strategy <- match.arg(sample_strategy)
   rd_ci_method <- match.arg(rd_ci_method)
 
@@ -279,7 +280,8 @@ modelMakerSequentialRD <- function(variable_name,
     rd_ci_method = rd_ci_method,
     include_rr = include_rr,
     family = family,
-    offset = offset
+    offset = offset,
+    time = time
   )
 
   rename_cols <- function(df, suffix) {
@@ -528,7 +530,7 @@ compute_level_order <- function(x, ref_level = NULL) {
 }
 
 .atomic_write_csv <- function(df, path) {
-  .atomic_write(path, function(tmp) readr::write_csv(df, tmp))
+  .atomic_write(path, function(tmp) .react_write_csv(df, tmp))
 }
 
 .atomic_write_rds <- function(obj, path) {
@@ -537,10 +539,10 @@ compute_level_order <- function(x, ref_level = NULL) {
 
 .robust_read_csv <- function(path) {
   if (!file.exists(path)) return(data.frame())
-  out <- tryCatch({
-    if (requireNamespace("readr", quietly = TRUE)) suppressWarnings(readr::read_csv(path, show_col_types = FALSE, progress = FALSE))
-    else utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
-  }, error = function(e) data.frame())
+  out <- tryCatch(
+    utils::read.csv(path, stringsAsFactors = FALSE, check.names = FALSE, encoding = "UTF-8"),
+    error = function(e) data.frame()
+  )
   as.data.frame(out, stringsAsFactors = FALSE)
 }
 
@@ -554,8 +556,11 @@ compute_level_order <- function(x, ref_level = NULL) {
   if (!nrow(df)) return(df)
   to_char <- intersect(c("Level","Category","term_raw","model","model_family","measure","outcome_level","adjustment_label","stage","adjusted_vars","status","error_msg","warnings","separation_msg"), names(df))
   for (nm in to_char) df[[nm]] <- as.character(df[[nm]])
-  # CSV readers turn the crude model's empty adjuster list into NA.
-  if ("adjusted_vars" %in% names(df)) df$adjusted_vars[is.na(df$adjusted_vars)] <- ""
+  # CSV readers turn empty strings into NA: the crude model's empty adjuster list, and
+  # diagnostics messages, which reports count with nzchar() (TRUE for NA).
+  for (nm in intersect(c("adjusted_vars", "error_msg", "warnings", "separation_msg"), names(df))) {
+    df[[nm]][is.na(df[[nm]])] <- ""
+  }
   if (startsWith(kind, "plot_")) {
     if ("adjustment" %in% names(df)) df$adjustment <- suppressWarnings(as.integer(df$adjustment))
     num_cols <- c(toupper(sub("^plot_", "", kind)), "Lower", "Upper", "P_value", "Q_value")
@@ -563,8 +568,11 @@ compute_level_order <- function(x, ref_level = NULL) {
   } else if (startsWith(kind, "df_")) {
     if ("Nobs_in_model" %in% names(df)) df$Nobs_in_model <- suppressWarnings(as.integer(df$Nobs_in_model))
   } else if (kind == "diagnostics") {
-    int_cols <- intersect(c("nobs","rd_rows","rr_rows","attempt"), names(df))
+    int_cols <- intersect(c("nobs","rd_rows","rr_rows","attempt","events"), names(df))
     for (nm in int_cols) df[[nm]] <- suppressWarnings(as.integer(df[[nm]]))
+    for (nm in intersect(c("ph_p_value","ph_global_p_value"), names(df))) {
+      df[[nm]] <- suppressWarnings(as.numeric(df[[nm]]))
+    }
     if ("vcov_ok" %in% names(df)) df$vcov_ok <- as.logical(df$vcov_ok)
   }
   df
@@ -681,7 +689,8 @@ modelMakerAdjustedSetsRD <- function(variable_name,
                                      rd_ci_method            = c("delta", "simulation"),
                                      include_rr              = FALSE,
                                      family                  = "auto",
-                                     offset                  = NULL) {
+                                     offset                  = NULL,
+                                     time                    = NULL) {
   sample_strategy <- match.arg(sample_strategy)
   rd_ci_method <- match.arg(rd_ci_method)
 
@@ -738,7 +747,8 @@ modelMakerAdjustedSetsRD <- function(variable_name,
     include_intercept = TRUE,
     ref_level = ref_level,
     family = family,
-    offset = offset
+    offset = offset,
+    time = time
   )
 
   or_rows <- runner$rows
@@ -850,6 +860,7 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
                               include_rr = FALSE,
                               family = "auto",
                               offset = NULL,
+                              time = NULL,
                               p_adjust_method = "BH") {
   sample_strategy <- match.arg(sample_strategy)
   rd_ci_method <- match.arg(rd_ci_method)
@@ -865,8 +876,9 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   list_of_variables_of_interest <- unique(list_of_variables_of_interest)
   if (length(list_of_variables_of_interest) == 0) stop("No variables to analyse")
 
-  spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome)
+  spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome, time = time)
   .react_check_offset(offset, spec, dat)
+  .react_check_time(time, spec, dat)
   message(if (identical(family, "auto")) "Assuming " else "Fitting ", spec$label, " models.")
   # Marginal effects need a binary outcome; other families skip them.
   if (!isTRUE(spec$binary) && (isTRUE(include_rd) || isTRUE(include_rr))) {
@@ -907,11 +919,12 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   # Hashes are computed once here, not on parallel workers.
   spec_hash_for <- function(pred_name) {
     sets <- sets_for(pred_name)
-    cols <- intersect(unique(c(outcome, pred_name, unlist(sets, use.names = FALSE), offset)), names(dat))
+    cols <- intersect(unique(c(outcome, pred_name, unlist(sets, use.names = FALSE), offset, time)),
+                      names(dat))
     rlang::hash(list(
       outcome = outcome, predictor = pred_name, sets = sets,
       stages = .react_stage_numbers(sets, joint_adjustment_vars, incremental),
-      family = spec$name, offset = offset,
+      family = spec$name, offset = offset, time = time,
       include_crude = include_crude, include_rd = include_rd, include_rr = include_rr,
       n_sim = n_sim, rd_ci_method = rd_ci_method, sample_strategy = sample_strategy,
       glm_control = glm_control, retry_failed = retry_failed, max_retries = max_retries,
@@ -958,7 +971,8 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
                                  rd_ci_method = rd_ci_method,
                                  include_rr = include_rr,
                                  family = spec$name,
-                                 offset = offset),
+                                 offset = offset,
+                                 time = time),
         error = function(e) e
       )
       if (inherits(res, "error")) {
@@ -1123,7 +1137,7 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   }
   out_diag <- combine("diagnostics")
 
-  # Name coefficient columns after the family's measure (OR, RR, IRR or Beta).
+  # Name coefficient columns after the family's measure (OR, RR, IRR, HR or Beta).
   plot_out$OR <- .react_label_measure(plot_out$OR, spec$measure)
   df_out$OR <- .react_label_measure(df_out$OR, spec$measure, wide = TRUE)
 

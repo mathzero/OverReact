@@ -23,6 +23,16 @@
   (`cat_test`, `cont_test` override), records them in a `"tests"` attribute,
   and adds standardised mean differences with `smd = TRUE`.
 * `tableOneDisplay()` renders `tableOne()` results as flextable or gt tables.
+* Cox proportional hazards models, with `family = "cox"` (or by supplying `time`
+  with `family = "auto"`) in every modelling wrapper and in
+  `run_auto_tableone_regressions()`. The outcome is the event indicator, and
+  `time` names the follow-up time, or start and stop columns for delayed entry
+  or time-varying covariates. Estimates are hazard ratios (`HR`). Diagnostics
+  add the number of events, `cox.zph()` proportional-hazards p-values and
+  predictor levels with no events, and the automated report counts
+  proportional-hazards violations. `makeORTable()` and `plotReactForest()`
+  accept fitted `coxph` models. Cox models need the survival package, which
+  ships with R.
 * Batch plotting outputs gain a `Q_value` column: Benjamini-Hochberg (or any
   `p_adjust_method`) adjusted p-values within each adjustment stage, across all
   predictors and levels. The automated report shows q-values for the tests it
@@ -115,3 +125,16 @@
 * GitHub Actions run `R CMD check` on push and pull request.
 * The Quarto demo notebook is now the package vignette, `vignette("OverReact")`,
   updated for the current interface.
+* Fewer dependencies, so the package installs from an offline bundle in the
+  REACT enclave: ggforce, readr, stringr and tidyr are replaced by base R and
+  ggplot2, and openxlsx, future and future.apply are optional (Suggests). The
+  dependency tree falls from 54 packages to 25. Outputs are unchanged.
+  `savePrettyExcelWorkbook()` needs openxlsx, and `ncores > 1` needs future and
+  future.apply; without them, runs are sequential. ggplot2 4.0.0 or later is now
+  required.
+* `inst/enclave/make_bundle.R` builds that offline bundle, with checksums and an
+  installer; `inst/ENCLAVE_INSTALL.md` explains it.
+* CSV files are written as UTF-8 even in a C locale, with numbers in the
+  shortest form that reads back exactly.
+* Diagnostics restored from checkpoint CSV files keep empty messages as `""`
+  rather than `NA`, which the automated report counted as separation flags.

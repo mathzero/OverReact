@@ -9,7 +9,8 @@ modelMakerSequential <- function(variable_name, data, sf = 2, format = "f", simp
                                  sample_strategy = c("common_per_predictor", "per_model"),
                                  glm_control = stats::glm.control(maxit = 50),
                                  family = "auto",
-                                 offset = NULL) {
+                                 offset = NULL,
+                                 time = NULL) {
   sample_strategy <- match.arg(sample_strategy)
 
   if (!is.data.frame(data)) stop("data must be a data.frame")
@@ -38,7 +39,8 @@ modelMakerSequential <- function(variable_name, data, sf = 2, format = "f", simp
     include_intercept = TRUE,
     ref_level = ref_level,
     family = family,
-    offset = offset
+    offset = offset,
+    time = time
   )
 
   plot_rows <- runner$rows
@@ -141,6 +143,7 @@ ModelMakerMulti <- function(dat,
                             glm_control                = stats::glm.control(maxit = 50),
                             family                     = "auto",
                             offset                     = NULL,
+                            time                       = NULL,
                             p_adjust_method            = "BH") {
   sample_strategy <- match.arg(sample_strategy)
 
@@ -161,8 +164,9 @@ ModelMakerMulti <- function(dat,
     warning("Adjustment variables not found in data: ", paste(missing_adj, collapse = ", "))
   }
 
-  spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome)
+  spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome, time = time)
   .react_check_offset(offset, spec, dat)
+  .react_check_time(time, spec, dat)
   message(if (identical(family, "auto")) "Assuming " else "Fitting ", spec$label, " models.")
 
   single_var_runner <- function(pred_name) {
@@ -182,7 +186,8 @@ ModelMakerMulti <- function(dat,
       glm_control = glm_control,
       include_intercept = TRUE,
       family = spec$name,
-      offset = offset
+      offset = offset,
+      time = time
     )
 
     plot_rows <- runner$rows
@@ -207,6 +212,10 @@ ModelMakerMulti <- function(dat,
 
   if (is.null(ncores) || ncores < 2L) {
     message("Running sequentially ...")
+    results <- lapply(list_of_variables_of_interest, single_var_runner)
+  } else if (!requireNamespace("future", quietly = TRUE) ||
+             !requireNamespace("future.apply", quietly = TRUE)) {
+    message("future/future.apply not available; running sequentially.")
     results <- lapply(list_of_variables_of_interest, single_var_runner)
   } else {
     workers <- min(as.integer(ncores), future::availableCores())
@@ -258,7 +267,7 @@ ModelMakerMulti <- function(dat,
   if (nrow(out_df) && "Level" %in% names(out_df)) out_df <- dplyr::rename(out_df, Category = Level)
   if (nrow(out_plot) && "Level" %in% names(out_plot)) out_plot <- dplyr::rename(out_plot, Category = Level)
 
-  # Name estimate columns after the family's measure (OR, RR, IRR or Beta).
+  # Name estimate columns after the family's measure (OR, RR, IRR, HR or Beta).
   out_plot <- .react_label_measure(out_plot, spec$measure)
   out_plot <- .react_add_q_values(out_plot, p_adjust_method)
   out_df <- .react_label_measure(out_df, spec$measure, wide = TRUE)

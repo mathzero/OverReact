@@ -3,10 +3,10 @@
 # A family specification says how a predictor's models are fitted and reported: the
 # fitting engine, the glm family, the effect measure, whether standard errors are robust
 # (sandwich), and whether the outcome is binary, which allows marginal risk differences
-# and ratios.
+# and ratios. Cox models take the outcome as the event indicator and a separate `time`.
 
 .react_families <- c("auto", "binomial", "gaussian", "poisson", "quasipoisson",
-                     "log_binomial", "modified_poisson", "ordinal", "multinomial")
+                     "log_binomial", "modified_poisson", "ordinal", "multinomial", "cox")
 
 .react_family_spec <- function(name) {
   spec <- switch(name,
@@ -26,16 +26,37 @@
     ordinal = list(engine = "polr", measure = "OR", binary = FALSE,
                    label = "ordinal (proportional odds)"),
     multinomial = list(engine = "multinom", measure = "OR", binary = FALSE,
-                       label = "multinomial (logit)")
+                       label = "multinomial (logit)"),
+    cox = list(engine = "coxph", measure = "HR", binary = FALSE, event = TRUE,
+               label = "Cox proportional hazards")
   )
   utils::modifyList(list(name = name, glm_family = NULL, robust = FALSE), spec)
 }
 
-# Choose and validate a family for outcome y. "auto" picks binomial for two values,
-# ordinal or multinomial for ordered or unordered categories, and Gaussian otherwise.
-.react_resolve_family <- function(y, family = "auto", outcome = "outcome") {
+# Choose and validate a family for outcome y. "auto" picks Cox when a follow-up `time` is
+# given, binomial for two values, ordinal or multinomial for ordered or unordered
+# categories, and Gaussian otherwise.
+.react_resolve_family <- function(y, family = "auto", outcome = "outcome", time = NULL) {
   family <- match.arg(family, .react_families)
+  if (identical(family, "auto") && !is.null(time)) family <- "cox"
   values <- unique(stats::na.omit(y))
+  if (identical(family, "cox")) {
+    # The outcome is the event indicator, coded as for binary outcomes: 0/1, logical, or
+    # a two-level factor whose second level is the event. Every row may be an event.
+    coded <- if (is.logical(y) || (is.numeric(y) && all(values %in% c(0, 1)))) {
+      TRUE
+    } else {
+      (is.factor(y) || is.character(y)) && length(values) == 2L
+    }
+    if (!coded) {
+      stop("Cox models need an event indicator coded 0/1, logical or as a two-level factor; '",
+           outcome, "' is not.")
+    }
+    if (!any(.react_code_outcome(y, list(event = TRUE)) %in% 1L)) {
+      stop("Event indicator '", outcome, "' has no events.")
+    }
+    return(.react_family_spec(family))
+  }
   if (length(values) < 2L) {
     stop("Less than two unique non-missing values found for outcome '", outcome, "'.")
   }
@@ -80,7 +101,7 @@
 # outcomes become 0/1 (the second level is 1, as glm() treats factors), ordinal outcomes
 # ordered factors, and multinomial outcomes factors.
 .react_code_outcome <- function(y, spec) {
-  if (isTRUE(spec$binary)) {
+  if (isTRUE(spec$binary) || isTRUE(spec$event)) {
     if (is.logical(y)) return(as.integer(y))
     if (is.factor(y) || is.character(y)) {
       y <- droplevels(factor(y))
@@ -114,6 +135,7 @@
 # (logit link), risk ratios (log-link binomial) or incidence rate ratios (log-link
 # Poisson); identity links give differences ("Beta"); other links stay as coefficients.
 .react_model_measure <- function(mod) {
+  if (inherits(mod, "coxph")) return("HR")
   if (inherits(mod, c("polr", "multinom"))) return("OR")
   fam <- tryCatch(mod$family, error = function(e) NULL)
   if (is.null(fam$link)) return(if (inherits(mod, "lm")) "Beta" else "Coef")
@@ -127,13 +149,18 @@
   "Coef"
 }
 
-.react_ratio_measures <- c("OR", "RR", "IRR", "Ratio")
+.react_ratio_measures <- c("OR", "RR", "IRR", "HR", "Ratio")
 
 # Fit one stage's model, capturing warnings and errors for the diagnostics table.
 .react_fit_model_captured <- function(formula, data, spec, control) {
   fit_once <- function() {
     if (identical(spec$engine, "polr")) {
       return(MASS::polr(formula, data = data, Hess = TRUE))
+    }
+    if (identical(spec$engine, "coxph")) {
+      if (!requireNamespace("survival", quietly = TRUE)) stop("Cox models need the survival package.")
+      # model = TRUE keeps the model frame, which the coefficient extraction needs.
+      return(survival::coxph(formula, data = data, ties = "efron", model = TRUE))
     }
     if (identical(spec$engine, "multinom")) {
       if (!requireNamespace("nnet", quietly = TRUE)) stop("Multinomial models need the nnet package.")
@@ -182,6 +209,36 @@
     stop("`offset` is only used with Poisson and quasi-Poisson models.")
   }
   if (!offset %in% names(data)) stop("Offset variable '", offset, "' not found in data.")
+  invisible(NULL)
+}
+
+# Follow-up time for Cox models: one column (time to the event or censoring), or two
+# (the start and stop of each interval, for delayed entry or time-varying covariates).
+.react_check_time <- function(time, spec, data) {
+  if (!identical(spec$name, "cox")) {
+    if (!is.null(time)) stop("`time` is only used with Cox models (family = \"cox\").")
+    return(invisible(NULL))
+  }
+  if (is.null(time)) {
+    stop("Cox models need `time`: the follow-up time column, or start and stop columns.")
+  }
+  if (!is.character(time) || !length(time) %in% 1:2) {
+    stop("`time` must name one column, or two (start and stop).")
+  }
+  missing_cols <- setdiff(time, names(data))
+  if (length(missing_cols)) {
+    stop("Time variable(s) not found in data: ", paste(missing_cols, collapse = ", "))
+  }
+  for (v in time) {
+    if (!is.numeric(data[[v]])) stop("Time variable '", v, "' must be numeric.")
+  }
+  stop_time <- data[[time[length(time)]]]
+  if (any(stop_time < 0, na.rm = TRUE)) {
+    stop("Time variable '", time[length(time)], "' has negative values.")
+  }
+  if (length(time) == 2L && any(data[[time[1]]] >= stop_time, na.rm = TRUE)) {
+    stop("Start times ('", time[1], "') must be before stop times ('", time[2], "').")
+  }
   invisible(NULL)
 }
 
