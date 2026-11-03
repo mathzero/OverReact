@@ -34,7 +34,11 @@ message("All ", length(files), " files match the bundle's ",
         if (use_sha) "SHA-256" else "MD5", " checksums.")
 
 # 2. OverReact, and any bundled package that is missing or older than the bundled one.
-repo <- paste0(if (.Platform$OS.type == "windows") "file:///" else "file://", bundle)
+repo <- if (startsWith(bundle, "//")) {
+  paste0("file:", bundle)
+} else {
+  paste0(if (.Platform$OS.type == "windows") "file:///" else "file://", bundle)
+}
 db <- utils::available.packages(repos = repo, type = "source")
 have <- utils::installed.packages()[, c("Package", "Version"), drop = FALSE]
 newest <- tapply(have[, "Version"], have[, "Package"],
@@ -57,6 +61,10 @@ if (.Platform$OS.type == "windows" && !binaries) {
   }
 }
 message("Installing into ", lib, ": ", paste(todo, collapse = ", "))
+old_compile_opt <- options(
+  install.packages.compile.from.source = if (nzchar(Sys.which("make"))) "always" else "never"
+)
+on.exit(options(old_compile_opt), add = TRUE)
 utils::install.packages(todo, lib = lib, repos = repo, type = if (binaries) "both" else "source")
 missing <- todo[!nzchar(vapply(todo, function(pkg) system.file(package = pkg, lib.loc = lib),
                                 character(1)))]

@@ -36,7 +36,7 @@
 .table_one_groups <- function(dat, colvar, include_na) {
   x <- if (is.null(colvar)) rep("All data", nrow(dat)) else dat[[colvar]]
   .table_one_factor(x, include_na,
-                    reserved = c("Variable", "Level", "Missing", "Overall", "P-value", "units", "V"))
+                    reserved = c("Variable", "Level", "Missing", "Overall", "P-value", "SMD", "units", "V"))
 }
 
 .table_one_counts <- function(rows, groups, weights = NULL, digits = 0) {
@@ -154,8 +154,13 @@
     out
   }
   d <- (p1 - p2)[-1]
+  if (all(abs(d) < 1e-12)) return(0)
   pooled <- (category_cov(p1) + category_cov(p2)) / 2
-  value <- tryCatch(drop(t(d) %*% MASS::ginv(pooled) %*% d), error = function(e) NA_real_)
+  ginv_pooled <- tryCatch(MASS::ginv(pooled), error = function(e) NULL)
+  if (is.null(ginv_pooled) || max(abs(pooled %*% ginv_pooled %*% d - d)) > 1e-7) {
+    return(NA_real_)
+  }
+  value <- drop(t(d) %*% ginv_pooled %*% d)
   if (!is.finite(value)) return(NA_real_)
   sqrt(max(value, 0))
 }

@@ -80,9 +80,11 @@ naReporter <- function(data){
   counts <- lapply(names(data), function(nm) {
     x <- data[[nm]]
     m <- sum(is.na(x))
-    a <- sum(x == -91, na.rm = TRUE)
-    b <- sum(x == -92, na.rm = TRUE) + sum(x == -77, na.rm = TRUE)
-    c <- sum(x == -99, na.rm = TRUE)
+    has_codes <- !inherits(x, c("Date", "POSIXt")) &&
+      (is.numeric(x) || is.character(x) || is.factor(x))
+    a <- if (has_codes) sum(x == -91, na.rm = TRUE) else 0L
+    b <- if (has_codes) sum(x == -92, na.rm = TRUE) + sum(x == -77, na.rm = TRUE) else 0L
+    c <- if (has_codes) sum(x == -99, na.rm = TRUE) else 0L
     data.frame(variable = nm, missing = m, not_applicable = a, non_response = b,
                prefer_not_to_say = c, responses = nrow(data) - m - a - b - c,
                stringsAsFactors = FALSE)

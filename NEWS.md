@@ -23,6 +23,12 @@
   (`cat_test`, `cont_test` override), records them in a `"tests"` attribute,
   and adds standardised mean differences with `smd = TRUE`.
 * `tableOneDisplay()` renders `tableOne()` results as flextable or gt tables.
+* `modelOutputDisplay()` renders regression outputs from `ModelMakerMultiRD()`,
+  `ModelMakerMulti()`, `modelMakerSequential*()` and
+  `run_auto_tableone_regressions()` as publication-ready flextable, gt or
+  data.frame tables with bold predictor headers, indented category levels,
+  sample sizes (`N` and Cox `Events`), stage estimates, p-values, q-values,
+  marginal RDs/RRs and explanatory footnotes.
 * Cox proportional hazards models, with `family = "cox"` (or by supplying `time`
   with `family = "auto"`) in every modelling wrapper and in
   `run_auto_tableone_regressions()`. The outcome is the event indicator, and
@@ -115,6 +121,27 @@
   `validate_factor_levels()` reports empty levels.
 * `makeXtabPlottable()` and `naReporter()` work; `calculateEpiStats()` uses
   complete pairs; report RD intervals use the requested precision.
+* `ModelMakerMultiRD()` validates and removes missing adjustment variables up
+  front, assigns the shared final stage number when a predictor is the last
+  element of `joint_adjustment_vars`, avoids duplicate crude stages when no
+  adjusters remain, and disambiguates non-syntactic predictor checkpoint folder
+  names.
+* Logical predictors are supported across OR, RD and RR tables.
+* `GAMModelMaker()` aligns adjusted stage estimates by level rather than row
+  index when a factor level drops out.
+* Categorical SMDs return `NA` under complete separation instead of `0`, and
+  `SMD` is treated as a reserved column name in `tableOne()`.
+* `crossTab()` applies `colvar_levels` before adding `Category`, and
+  `xtabPercentageExtractor()` / `makeXtabPlottable()` handle confidence-interval
+  cells and mixed continuous/categorical tables without warnings.
+* `stratifiedTables()` drops unused factor levels, skips empty strata, handles
+  tibbles and honours `for_report`, `write_to_file` and `suffix`;
+  `add_conf_ints()` validates `sens` and `spec`.
+* `plotReactVIF()` connects trajectories across adjustment stages and applies
+  `scale_color_imperial()`; `plotReactForest(show_estimates = TRUE)` clamps
+  out-of-range error bars to `xrange`.
+* `savePrettyExcelWorkbook()` handles `tableOne()` level rows cleanly, and
+  `naReporter()` supports `Date` and `POSIXt` columns.
 
 ## Packaging
 

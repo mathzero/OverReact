@@ -105,6 +105,62 @@ test_that("GAMModelMaker fits sequential models with the requested reference", {
   expect_named(res$model_df, c("Variable", "Category", "crude_mod_OR", "plus_z", "plus_spline:x"))
   expect_equal(res$model_df_predictorORs_only$Category, c("(Intercept)", "b [reference]", "grpa", "grpc"))
   expect_equal(unique(res$crude_model_output$Variable), "grp")
+
+  # When an adjuster is missing for one predictor level, GAMModelMaker aligns rows by Level.
+  dat_drop <- dat
+  dat_drop$z[dat_drop$grp == "a"] <- NA
+  res_drop <- GAMModelMaker("grp", data = dat_drop, outcome = "y", ref_level = "b",
+                            joint_adjustment_vars = c("z", "x"), spline_vars = 2)
+  expect_equal(res_drop$model_df_predictorORs_only$Category, c("(Intercept)", "b [reference]", "grpa", "grpc"))
+  expect_true(is.na(res_drop$model_df$plus_z[res_drop$model_df$Category == "grpa"]))
+  expect_false(is.na(res_drop$model_df$crude_mod_OR[res_drop$model_df$Category == "grpa"]))
+})
+
+test_that("ModelMakerMulti labels wide columns with the family's measure", {
+  dat <- make_helper_test_data(n = 300)
+  res <- suppressMessages(
+    ModelMakerMulti(dat, "grp", outcome = "x", joint_adjustment_vars = "z", ncores = 1)
+  )
+  expect_named(res$df_output, c("Variable", "Category", "crude_mod_Beta", "plus_z_Beta"))
+})
+
+test_that("modelOutputDisplay formats regression outputs across model families", {
+  dat <- make_helper_test_data(n = 400)
+  mods <- suppressMessages(
+    ModelMakerMultiRD(dat, c("x", "grp"), outcome = "y",
+                      joint_adjustment_vars = c("z"),
+                      include_rd = TRUE, include_rr = TRUE, ncores = 1)
+  )
+  disp <- modelOutputDisplay(mods, output = "data.frame", title = "Main models")
+  expect_s3_class(disp, "data.frame")
+  expect_identical(disp$Characteristic, c("x", "Grp", "a [reference]", "b", "c"))
+  expect_identical(attr(disp, "header_rows"), c(1L, 2L))
+  expect_identical(attr(disp, "level_rows"), c(3L, 4L, 5L))
+  expect_true(all(c("N", "Crude OR (95% CI)", "Crude P-value", "Crude Q-value",
+                    "Crude RD (95% CI)", "Crude Marginal RR (95% CI)",
+                    "Adjusted (z) OR (95% CI)", "Adjusted (z) P-value", "Adjusted (z) Q-value",
+                    "Adjusted (z) RD (95% CI)", "Adjusted (z) Marginal RR (95% CI)") %in% names(disp)))
+  expect_match(attr(disp, "note"), "Binomial \\(logit\\) models reporting OR")
+  expect_match(attr(disp, "note"), "Marginal RD and marginal RR")
+
+  # Stage filtering and custom stage labels.
+  full_only <- modelOutputDisplay(mods, output = "data.frame", stages = "full",
+                                  include_rd = FALSE, include_rr = FALSE,
+                                  stage_labels = "Fully adjusted")
+  expect_true("Fully adjusted OR (95% CI)" %in% names(full_only))
+  expect_false(any(grepl("^Crude", names(full_only))))
+
+  # Unwraps run_auto_tableone_regressions() results directly.
+  auto_res <- suppressMessages(
+    run_auto_tableone_regressions(dat, outcome = "y", covariates = "z",
+                                  independent_variables = c("x", "grp"), ncores = 1)
+  )
+  expect_identical(
+    modelOutputDisplay(auto_res, output = "data.frame", include_rd = FALSE),
+    modelOutputDisplay(auto_res$model_outputs, output = "data.frame", include_rd = FALSE)
+  )
+
+  expect_error(modelOutputDisplay(data.frame(a = 1), output = "data.frame"), "ModelMakerMulti")
 })
 
 test_that("modelling functions need the data argument", {

@@ -259,10 +259,16 @@ run_auto_tableone_regressions <- function(
 
   # Diagnostics snippet (optional)
   if (!is.null(diag_df) && nrow(diag_df)) {
-    n_err <- sum(diag_df$status %in% c("error","failed"), na.rm = TRUE)
-    n_sep <- sum(nzchar(diag_df$separation_msg %||% ""), na.rm = TRUE)
+    diag_final <- diag_df
+    if (all(c("Variable", "stage", "attempt") %in% names(diag_final))) {
+      max_att <- stats::ave(diag_final$attempt, diag_final$Variable, diag_final$stage,
+                            FUN = function(a) if (all(is.na(a))) NA_integer_ else max(a, na.rm = TRUE))
+      diag_final <- diag_final[is.na(max_att) | diag_final$attempt == max_att, , drop = FALSE]
+    }
+    n_err <- sum(diag_final$status %in% c("error","failed"), na.rm = TRUE)
+    n_sep <- sum(nzchar(diag_final$separation_msg %||% ""), na.rm = TRUE)
     # Cox models: cox.zph() tests of proportional hazards for each model's predictor.
-    ph_p <- diag_df$ph_p_value %||% numeric()
+    ph_p <- diag_final$ph_p_value %||% numeric()
     n_ph <- sum(ph_p < 0.05, na.rm = TRUE)
     if (n_err + n_sep + n_ph > 0) {
       sep_label <- if (identical(spec$name, "cox")) "Levels with no events" else "Perfect/near separation flags"

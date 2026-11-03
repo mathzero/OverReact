@@ -30,7 +30,7 @@ REACT-specific variable names.
 | Task | Principal functions |
 | --- | --- |
 | Describe a study population | `tableOne()`, `tableCat()`, `tableCont()`, `tableOneDisplay()` |
-| Estimate associations | `ModelMakerMulti()`, `ModelMakerMultiRD()`, `makeRDTable()`, `makeRRTable()` |
+| Estimate associations | `ModelMakerMulti()`, `ModelMakerMultiRD()`, `makeRDTable()`, `makeRRTable()`, `modelOutputDisplay()` |
 | Estimate prevalence | `makeTablesNew()`, `stratifiedTables()` |
 | Combine description and regression | `run_auto_tableone_regressions()` |
 | Plot estimates and diagnostics | `plotReactForest()`, `plotReactVIF()` |
@@ -146,9 +146,10 @@ See [the table documentation](man/tableOne.Rd) and
 | `modelMakerSequentialRD()` | Fit one predictor with cumulative adjustment and optional risk differences and ratios. Returns separate coefficient, RD and RR tables, crude and adjusted results, diagnostics and sample counts. |
 | `modelMakerAdjustedSetsRD()` | Fit one predictor using named `adj_sets`. Returns `model_df_ORs`, `model_df_RDs`, `model_df_RRs`, the matching `crude_model_*` and `adj_*_outputs` tables, `diagnostics`, the `family` and `measure`, and sample counts. |
 | `makeORTable()` | Extract coefficients, 95% Wald intervals and p-values from a fitted `glm`, `lm`, `gam`, `polr`, `multinom` or `coxph` model. Logit-link coefficients are exponentiated to odds ratios, log-link coefficients to risk or rate ratios and Cox coefficients to hazard ratios; other links keep their original scale. The `measure` column says which (`OR`, `RR`, `IRR`, `HR`, `Beta` or `Coef`). Optional reference rows and term metadata are included; `dp = NULL` returns unrounded estimates. |
-| `makeRDTable()` | Estimate marginal risk differences for a factor or numeric predictor in a binomial model, as described below. Returns `Level`, `RD`, `Lower`, `Upper` and `P_value`; intervals use the delta method, or coefficient simulation with `ci_method = "simulation"`. |
+| `makeRDTable()` | Estimate marginal risk differences for a factor, character, logical or numeric predictor in a binomial model, as described below. Returns `Level`, `RD`, `Lower`, `Upper` and `P_value`; intervals use the delta method, or coefficient simulation with `ci_method = "simulation"`. |
 | `makeRRTable()` | Estimate marginal risk ratios in the same way, returning `Level`, `RR`, `Lower`, `Upper` and `P_value`. |
 | `safe_makeRDTable()` | Wrap `makeRDTable()` with error capture and an explicit reference row for factor predictors. Returns `NULL` on a caught error. |
+| `modelOutputDisplay()` | Render regression results from `ModelMakerMultiRD()`, `ModelMakerMulti()`, `modelMakerSequential*()` or `run_auto_tableone_regressions()` as a `flextable`, `gt` or `data.frame` display table, with bold predictor headers, indented category rows, sample size `N` (and `Events` for Cox models), formatted stage estimates, p-values, q-values, marginal RDs/RRs and an explanatory footnote. |
 
 ### Model families
 

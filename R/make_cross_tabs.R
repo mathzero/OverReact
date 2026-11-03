@@ -125,15 +125,15 @@ crossTab <- function(dat, rowvar, colvar, rowvar_levels = NULL,
   }
 
 
+  if(!is.null(colvar_levels)){
+    colnames(tab) <-  c(colvar_levels,"Total")
+  }
   if(!is.null(rowvar_levels)){
     colnames(tab)[ncol(tab)] <-  "Total"
     tab$Category <- c(rowvar_levels, "Total")
   }
   else{
     tab$Category <- rownames(tab_bu)
-  }
-  if(!is.null(colvar_levels)){
-    colnames(tab) <-  c(colvar_levels,"Total")
   }
   tab <- tab %>% dplyr::select(Category, everything())
   if(statistical_test){
@@ -290,14 +290,17 @@ crossTabMulti <- function(dat, rowvars, colvar=NULL, cov_names=NULL, confint=TRU
 # define dirty function to get numbers out of xtabs
 xtabPercentageExtractor <- function(mystring="teststrng",
                                     lookbehind = "\\(",
-                                    lookahead= "\\%)",
+                                    lookahead= "\\%",
                                     return_numeric=TRUE){
   full_lookbehind=paste0(".*",lookbehind)
   full_lookahead=paste0(lookahead,".*")
+  pattern <- paste0(lookbehind, ".*", lookahead)
+  matched <- !is.na(mystring) & grepl(pattern, mystring)
   x=gsub(full_lookbehind, "",mystring)
   y=gsub(full_lookahead, "",x)
+  y[!matched] <- NA_character_
   if(return_numeric){
-    y=as.numeric(y)
+    y=suppressWarnings(as.numeric(y))
   }
   return(y)
 }

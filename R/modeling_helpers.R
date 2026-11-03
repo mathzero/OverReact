@@ -30,6 +30,7 @@
 .react_prepare_analysis_frame <- function(data, vars, drop_missing = TRUE) {
   out <- as.data.frame(data[, vars, drop = FALSE], stringsAsFactors = FALSE)
   for (nm in names(out)) {
+    if (is.logical(out[[nm]])) out[[nm]] <- factor(out[[nm]], levels = c(FALSE, TRUE))
     if (is.character(out[[nm]])) out[[nm]] <- factor(out[[nm]])
     # Ordered factors get treatment contrasts like other factors, so tables report one
     # estimate per level against the reference rather than polynomial trend terms.

@@ -339,22 +339,27 @@ GAMModelMaker <- function(variable_name, data,
     mod.results.list[[i]] <- tab
   }
 
-  ### Now we add all the models together into one big DF. Predictor rows come first in
-  ### every model, so adjusted rows extend the crude rows.
-  full_tab <- if (length(mod.results.list)) mod.results.list[[length(mod.results.list)]] else tab_univ
-  df.output <- data.frame(Variable = variable_name, Category = full_tab$Level,
+  ### Combine all stage tables by matching on Level, so dropped factor levels in later
+  ### stages never shift estimates onto the wrong Category row.
+  all_tabs <- c(list(tab_univ), mod.results.list)
+  all_levels <- unique(unlist(lapply(all_tabs, `[[`, "Level"), use.names = FALSE))
+  df.output <- data.frame(Variable = variable_name, Category = all_levels,
                           stringsAsFactors = FALSE)
-  pad <- function(x) c(x, rep(NA_character_, nrow(df.output) - length(x)))
-  df.output$crude_mod_OR <- pad(format_estimates(tab_univ))
+  match_estimates <- function(tab) {
+    est <- format_estimates(tab)
+    est[match(all_levels, tab$Level)]
+  }
+  df.output$crude_mod_OR <- match_estimates(tab_univ)
   for (i in seq_along(joint_adjustment_vars)) {
     col <- paste0("plus_", if (splined[i]) "spline:" else "", joint_adjustment_vars[[i]])
-    df.output[[col]] <- pad(format_estimates(mod.results.list[[i]]))
+    df.output[[col]] <- match_estimates(mod.results.list[[i]])
   }
+  pred_levels <- tab_univ$Level
   tab_univ$Variable <- variable_name
   names(tab_univ)[names(tab_univ) == "Level"] <- "Category"
 
   list(model_df = df.output,
-       model_df_predictorORs_only = df.output[stats::complete.cases(df.output), , drop = FALSE],
+       model_df_predictorORs_only = df.output[df.output$Category %in% pred_levels, , drop = FALSE],
        crude_model_output = tab_univ,
        adj_model_outputs = mod.results.list)
 }

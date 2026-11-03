@@ -243,11 +243,14 @@
 }
 
 # Give estimate columns the effect measure's name: "OR" in long tables, and the "_OR"
-# suffix of formatted stage columns in wide tables.
+# suffix (or "plus_<adj>" stage columns) of formatted stage columns in wide tables.
 .react_label_measure <- function(df, measure, wide = FALSE) {
   if (identical(measure, "OR") || is.null(df) || !nrow(df)) return(df)
   if (isTRUE(wide)) {
     names(df) <- sub("_OR$", paste0("_", measure), names(df))
+    plus_cols <- grepl("^plus_", names(df)) &
+      !grepl("_(OR|RR|IRR|HR|Beta|RD|Ratio|Coef)$", names(df))
+    names(df)[plus_cols] <- paste0(names(df)[plus_cols], "_", measure)
   } else {
     names(df)[names(df) == "OR"] <- measure
   }

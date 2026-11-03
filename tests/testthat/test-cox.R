@@ -164,4 +164,10 @@ test_that("single Cox fits work with makeORTable() and plotReactForest()", {
   expect_equal(tab$OR, unname(exp(coef(fit))))
   expect_true(all(tab$measure == "HR" & tab$model_family == "cox" & !tab$is_intercept))
   expect_identical(plotReactForest(fit)$labels$y, "Hazard ratio")
+
+  cox_mods <- fit_cox(dat, c("age", "bmi"))
+  disp <- modelOutputDisplay(cox_mods, output = "data.frame")
+  expect_true(all(c("N", "Events", "Crude HR (95% CI)", "Adjusted (sex) HR (95% CI)") %in% names(disp)))
+  expect_identical(disp$Events[disp$Characteristic == "Age"],
+                   formatC(sum(dat$event), format = "d", big.mark = ","))
 })

@@ -82,4 +82,17 @@ test_that("makeTablesNew needs no labels and skips covariates with no observed v
   dat$wave <- rep(c("w1", "w2"), length.out = nrow(dat))
   strat <- quietly(stratifiedTables(dat, covariates = "sex", strat_var = "wave"))
   expect_named(strat, c("Variable", "Category", "w1", "w2"))
+
+  # Unused factor levels and NAs in strat_var are handled, and sens/spec are validated.
+  dat$wave_fac <- factor(dat$wave, levels = c("w1", "w2", "unused"))
+  dat$wave_fac[1:5] <- NA
+  strat_fac <- quietly(stratifiedTables(dplyr::as_tibble(dat), covariates = "sex",
+                                        strat_var = "wave_fac", for_report = TRUE))
+  expect_named(strat_fac, c("Variable", "Category", "w1", "w2"))
+
+  tab <- matrix(c(50, 5, 45, 5), nrow = 2, dimnames = list(c("0", "1"), c("a", "b")))
+  expect_error(add_conf_ints(tab, poscol = "1", negcol = "0", sens = 0.5, spec = 0.5),
+               "greater than 1")
+  expect_error(add_conf_ints(tab, poscol = "1", negcol = "0", sens = 1.2, spec = 0.9),
+               "between 0 and 1")
 })

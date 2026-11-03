@@ -90,7 +90,14 @@ pvalAsterisker <- function(p_values,return_p=FALSE,return_ns=FALSE,round_to=4){
   thresh=10^(-round_to)
   fixed <- function(x) formatC(x, format = "f", digits = round_to, drop0trailing = TRUE)
 
-  p_values_edit=ifelse(p_values<thresh, paste0("<", fixed(thresh)), fixed(round(p_values,round_to)))
+  p_rounded <- round(p_values, round_to)
+  for (cut in c(0.05, 0.01, 0.001, 0.0001)) {
+    if (cut >= thresh) {
+      hit <- !is.na(p_values) & p_values < cut & p_rounded >= cut
+      p_rounded[hit] <- cut - thresh
+    }
+  }
+  p_values_edit=ifelse(p_values<thresh, paste0("<", fixed(thresh)), fixed(p_rounded))
   if(return_p){
     ast_vect <- ifelse(is.na(p_values), NA_character_, paste0(p_values_edit,ast_vect))
   }

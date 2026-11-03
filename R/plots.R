@@ -15,10 +15,11 @@ plotReactVIF <- function(vif_df,
                          adjustment_descriptions  = NULL,
                          vline                    = 5,                 # common VIF “rule‑of‑thumb”
                          legend.position          = "bottom",
-                         palette                  = "core",
+                         palette                  = "default",
                          strip_text_size          = 8) {
+  if (identical(palette, "core")) palette <- "default"
 
-  ## 1  Tidy and label ---------------------------------------------------------
+  ## 1  Tidy and label ---------------------------------------------------------
   if (is.null(adjustment_descriptions)) {
     adjustment_descriptions <- paste("Adj.", adjustment_numbers)
   }
@@ -49,7 +50,7 @@ plotReactVIF <- function(vif_df,
       x = adjustment,
       y = vif,
       colour = adjust_desc,
-      group = adjust_desc
+      group = 1
     )
   ) +
     ggplot2::geom_hline(
@@ -61,7 +62,7 @@ plotReactVIF <- function(vif_df,
     ggplot2::geom_line(linewidth = 0.3) +
     ggplot2::geom_point(size = 1) +
     ggplot2::scale_x_continuous(breaks = adjustment_numbers) +
-    # OverReact::scale_color_imperial(palette = palette) +
+    scale_color_imperial(palette = palette) +
     ggplot2::facet_wrap(ggplot2::vars(Variable),
                         ncol   = 1,
                         scales = "fixed",
@@ -789,6 +790,11 @@ plotReactForest <- function(univ_df_plot,
     estimate_header_row <- data.frame(Variable = factor(var_levels[1], levels = var_levels),
                                       header = estimate_header)
     estimate_width_pt <- 8 * 0.55 * max(nchar(c(estimate_rows$estimate_text, estimate_header))) + 12
+    # Clamp plotted coordinates to xrange when panel clipping is off, so wide intervals
+    # do not draw across the estimate column.
+    plot_df$effect_value <- pmax(xrange[[1]], pmin(xrange[[2]], plot_df$effect_value))
+    plot_df$Lower <- pmax(xrange[[1]], pmin(xrange[[2]], plot_df$Lower))
+    plot_df$Upper <- pmax(xrange[[1]], pmin(xrange[[2]], plot_df$Upper))
   }
 
   p <- ggplot2::ggplot(

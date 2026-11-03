@@ -179,10 +179,15 @@ savePrettyExcelWorkbook <- function(listOfTables=NULL, workbookName = "myworkboo
     wholeNumberColumns = which(colnames(tab) %in% c("Positive", "Total", noDecimalsColumns))
     decimalNumberColumns = which(colnames(tab) %in% c("Prevalence", "Lower", "Upper"))
 
-    # First we delete all the repeating variable names
-    dupes = duplicated(tab$Variable)
-    if(length(dupes) > 0){
-      tab$Variable[dupes] <- NA_character_
+    # First we delete all the repeating variable names (and blank tableOne() level markers)
+    if ("Variable" %in% colnames(tab)) {
+      is_blank_var <- !is.na(tab$Variable) & trimws(tab$Variable) == ""
+      dupes <- duplicated(tab$Variable) | is_blank_var
+      tab$Variable[dupes] <- ""
+      dashRows <- which(!dupes) + 1
+    } else {
+      dupes <- rep(FALSE, nrow(tab))
+      dashRows <- integer(0)
     }
 
     # now replace all NaN
@@ -217,7 +222,6 @@ savePrettyExcelWorkbook <- function(listOfTables=NULL, workbookName = "myworkboo
     numberColStyle = openxlsx::createStyle(numFmt = numFmt, halign = "right")
 
     colourRows = 2:(nrow(tab) + 1)
-    dashRows = which(!dupes) + 1
 
     # apply styles
     openxlsx::addStyle(wb = wb, sheet = tabName, style = rowWhiteStyle,
@@ -228,9 +232,11 @@ savePrettyExcelWorkbook <- function(listOfTables=NULL, workbookName = "myworkboo
                        cols = 1:ncol(tab), rows = colourRows[which(colourRows %% 2 == 1)],
                        gridExpand = TRUE, stack = TRUE)
 
-    openxlsx::addStyle(wb = wb, sheet = tabName, style = dashedRowBorder,
-                       cols = 1:ncol(tab), rows = dashRows,
-                       gridExpand = TRUE, stack = TRUE)
+    if (length(dashRows)) {
+      openxlsx::addStyle(wb = wb, sheet = tabName, style = dashedRowBorder,
+                         cols = 1:ncol(tab), rows = dashRows,
+                         gridExpand = TRUE, stack = TRUE)
+    }
 
     ## add column number styles
     openxlsx::addStyle(wb = wb, sheet = tabName, style = wholeNumberColStyle,

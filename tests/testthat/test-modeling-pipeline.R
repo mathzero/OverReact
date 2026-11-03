@@ -407,4 +407,87 @@ test_that("a predictor that is also an adjuster keeps the shared stage numbers",
   forest <- plotReactForest(res, adjustment_numbers = c(0, 2))
   expect_setequal(as.character(unique(forest$data$Variable[forest$data$adjustment == "2"])),
                   c("X1", "X2"))
+
+  # Even the final adjuster in joint_adjustment_vars receives the shared final stage number.
+  res_all <- suppressMessages(
+    ModelMakerMultiRD(dat, c("x1", "x2", "x3"), outcome = "y_bin",
+                      joint_adjustment_vars = c("x2", "x3"), include_rd = FALSE, ncores = 1)
+  )
+  expect_equal(stages(res_all$plot_output, "X3"), c(0, 2))
+  full_all <- res_all$plot_output[res_all$plot_output$adjustment == 2 & !res_all$plot_output$is_reference, ]
+  expect_setequal(full_all$Variable, c("X1", "X2", "X3"))
+})
+
+test_that("ModelMakerMultiRD strips missing adjusters upfront and avoids duplicate crude stages", {
+  dat <- make_model_test_data(n = 300)
+  expect_warning(
+    res <- suppressMessages(
+      ModelMakerMultiRD(dat, "cat", outcome = "y_bin",
+                        joint_adjustment_vars = c("missing_adj", "x2"),
+                        include_rd = FALSE, ncores = 1)
+    ),
+    "Adjustment variables not found in data: missing_adj"
+  )
+  expect_named(res$df_output, c("Variable", "Category", "Nobs_in_model", "crude_mod_OR", "adj_x2_OR"))
+  expect_equal(sort(unique(res$plot_output$adjustment)), c(0L, 1L))
+
+  # When no adjustment variables remain and include_crude = TRUE, only the crude stage is fitted.
+  expect_warning(
+    crude_only <- suppressMessages(
+      ModelMakerMultiRD(dat, "cat", outcome = "y_bin",
+                        joint_adjustment_vars = "missing_adj",
+                        include_rd = FALSE, ncores = 1)
+    ),
+    "Adjustment variables not found in data: missing_adj"
+  )
+  expect_named(crude_only$df_output, c("Variable", "Category", "Nobs_in_model", "crude_mod_OR"))
+  expect_equal(unique(crude_only$plot_output$adjustment), 0L)
+})
+
+test_that("non-syntactic predictor names get distinct checkpoint directories", {
+  dat <- make_model_test_data(n = 300)
+  dat$age_grp <- dat$x1
+  dat$`age grp` <- dat$x2
+  expect_identical(OverReact:::.sanitize_var_id("cat"), "cat")
+  expect_false(identical(OverReact:::.sanitize_var_id("age_grp"),
+                         OverReact:::.sanitize_var_id("age grp")))
+
+  savepath <- withr::local_tempdir()
+  first <- suppressMessages(
+    ModelMakerMultiRD(dat, c("age_grp", "age grp"), outcome = "y_bin",
+                      joint_adjustment_vars = "x3", include_rd = FALSE, ncores = 1,
+                      savepath = savepath)
+  )
+  reused <- suppressMessages(
+    ModelMakerMultiRD(dat, c("age_grp", "age grp"), outcome = "y_bin",
+                      joint_adjustment_vars = "x3", include_rd = FALSE, ncores = 1,
+                      savepath = savepath)
+  )
+  expect_equal(reused$plot_output$OR, first$plot_output$OR)
+  expect_false(isTRUE(all.equal(
+    reused$plot_output$OR[reused$plot_output$Variable == "Age Grp (age_grp)"],
+    reused$plot_output$OR[reused$plot_output$Variable == "Age Grp (age grp)"]
+  )))
+})
+
+test_that("logical predictors work across OR, RD and RR tables", {
+  dat <- make_model_test_data(n = 400)
+  dat$exposed <- dat$cat == "Case"
+  res <- suppressMessages(
+    ModelMakerMultiRD(dat, "exposed", outcome = "y_bin", joint_adjustment_vars = "x2",
+                      include_rd = TRUE, include_rr = TRUE, ncores = 1)
+  )
+  expect_equal(res$df_output$Category, c("FALSE [reference]", "TRUE"))
+  expect_equal(res$df_output_RDs$Category, c("FALSE [reference]", "TRUE"))
+  expect_equal(res$df_output_RRs$Category, c("FALSE [reference]", "TRUE"))
+
+  fit <- glm(y_bin ~ exposed + x2, family = binomial, data = dat)
+  rd_direct <- makeRDTable(fit, "exposed", dp = NULL)
+  expect_equal(rd_direct$Level, "TRUE")
+  expect_equal(rd_direct$RD,
+               res$plot_output_RDs$RD[res$plot_output_RDs$Category == "TRUE" &
+                                        res$plot_output_RDs$adjustment == 1],
+               tolerance = 1e-6)
+  safe_rd <- safe_makeRDTable(fit, "exposed")
+  expect_equal(safe_rd$Level, c("FALSE [reference]", "TRUE"))
 })

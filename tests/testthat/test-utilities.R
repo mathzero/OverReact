@@ -1,6 +1,7 @@
 test_that("p-value formatters keep missing values missing and avoid scientific notation", {
   expect_identical(pvalAsterisker(c(NA, 0.2, 1e-5, 1e-4), return_p = TRUE, return_ns = TRUE),
                    c(NA, "0.2ns", "<0.0001****", "0.0001***"))
+  expect_identical(pvalAsterisker(0.04999, return_p = TRUE, round_to = 4), "0.0499*")
   expect_identical(pValEpiConverter(c(NA, 0.2, 0.02)), c(NA, "ns", "p<0.05*"))
   expect_error(pValEpiConverter(0.1, num_asterisks = 5), "3 or 4")
 
@@ -129,12 +130,17 @@ test_that("reporting helpers order, validate and count correctly", {
   expect_match(issues[1], "Zero counts in levels: b")
   expect_match(issues[2], "less than 2 levels")
 
-  codes <- data.frame(q1 = c(1, -91, -92, -77, -99, NA), q2 = c("a", "b", "-99", "c", "d", "e"))
+  codes <- data.frame(
+    q1 = c(1, -91, -92, -77, -99, NA),
+    q2 = c("a", "b", "-99", "c", "d", "e"),
+    dt = as.Date(c("1969-10-02", "2021-01-01", "2021-01-02", "2021-01-03", "2021-01-04", NA))
+  )
   report <- naReporter(codes)
-  expect_identical(report$variable, c("q1", "q2"))
-  expect_equal(report$non_response, c(2, 0))
-  expect_equal(report$prefer_not_to_say, c(1, 1))
-  expect_equal(report$responses, c(1, 5))
+  expect_identical(report$variable, c("q1", "q2", "dt"))
+  expect_equal(report$non_response, c(2, 0, 0))
+  expect_equal(report$prefer_not_to_say, c(1, 1, 0))
+  expect_equal(report$not_applicable, c(1, 0, 0))
+  expect_equal(report$responses, c(1, 5, 5))
 })
 
 test_that("makeXtabPlottable extracts percentages from cross-tabs", {

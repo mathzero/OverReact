@@ -8,13 +8,25 @@ vignette: >
 ---
 
 ```{r, include = FALSE}
-knitr::opts_chunk$set(collapse = TRUE, comment = "#>", fig.width = 7.5, fig.height = 4.5,
-                      message = FALSE)
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7.5,
+  fig.height = 4.5,
+  message = FALSE,
+  warning = FALSE
+)
 ```
 
-This vignette walks through a typical analysis with OverReact: cleaning inputs,
-describing the study population, estimating prevalence, fitting crude and adjusted
-models, plotting them and exporting the results. It uses simulated data.
+This vignette walks through an end-to-end epidemiological analysis workflow with
+`OverReact`: cleaning survey inputs, inspecting missingness, describing the study
+population (`tableOne()` and `tableOneDisplay()`), estimating unstratified and
+stratified prevalence (`makeTablesNew()` and `stratifiedTables()`), fitting
+sequentially adjusted regression models across multiple families including Cox
+proportional-hazards models (`ModelMakerMultiRD()`), formatting regression tables
+for publication (`modelOutputDisplay()`), plotting forest and VIF diagnostics
+(`plotReactForest()` and `plotReactVIF()`), generating automated reports
+(`run_auto_tableone_regressions()`), and exporting outputs.
 
 ```{r setup}
 library(OverReact)
@@ -22,67 +34,159 @@ library(ggplot2)
 set.seed(123)
 ```
 
-## Simulated data
+## 1. Simulated study dataset
+
+We simulate a cohort of $n = 800$ participants with demographic covariates, a continuous
+primary exposure, binary and continuous outcomes, count outcomes with follow-up time, an
+ordinal severity outcome, right-censored survival times, and dirty survey-coded fields.
 
 ```{r data}
-n <- 1000
+n <- 800
 dat <- data.frame(
   age_years = round(rnorm(n, mean = 50, sd = 15)),
   sex = factor(sample(c("Female", "Male"), n, replace = TRUE)),
-  region = factor(sample(c("North", "Midlands", "South"), n, replace = TRUE,
-                         prob = c(0.30, 0.30, 0.40))),
-  deprivation = factor(sample(paste0("Q", 1:5), n, replace = TRUE), levels = paste0("Q", 1:5)),
-  smoking_status = factor(sample(c("Never", "Former", "Current"), n, replace = TRUE,
-                                 prob = c(0.55, 0.25, 0.20)),
-                          levels = c("Never", "Former", "Current")),
+  region = factor(
+    sample(c("North", "Midlands", "South"), n, replace = TRUE, prob = c(0.30, 0.30, 0.40)),
+    levels = c("South", "Midlands", "North")
+  ),
+  deprivation = factor(
+    sample(paste0("Q", 1:5), n, replace = TRUE),
+    levels = paste0("Q", 1:5)
+  ),
+  smoking_status = factor(
+    sample(c("Never", "Former", "Current"), n, replace = TRUE, prob = c(0.55, 0.25, 0.20)),
+    levels = c("Never", "Former", "Current")
+  ),
   exposure_primary = rnorm(n),
   bmi = rnorm(n, mean = 27, sd = 4),
+  survey_weight = runif(n, min = 0.7, max = 1.4),
   follow_up_years = runif(n, 0.5, 3),
-  sample_date_chr = format(as.Date("2022-01-01") + sample(0:120, n, replace = TRUE), "%d/%m/%Y"),
-  binary_1_2 = sample(c(1, 2), n, replace = TRUE, prob = c(0.25, 0.75)),
-  continuous_dirty = ifelse(runif(n) < 0.03, -1, rnorm(n, mean = 10, sd = 3))
+  sample_date_chr = format(
+    as.Date("2022-01-01") + sample(0:120, n, replace = TRUE),
+    "%d/%m/%Y"
+  ),
+  binary_1_2 = sample(c(1, 2, -99), n, replace = TRUE, prob = c(0.24, 0.72, 0.04)),
+  binary_1_0 = sample(c(0, 1, -77), n, replace = TRUE, prob = c(0.68, 0.28, 0.04)),
+  continuous_dirty = ifelse(runif(n) < 0.04, -1, rnorm(n, mean = 10, sd = 3))
 )
 
+# Binary, continuous, count, and ordinal outcomes
 linpred <- -1.1 + 0.55 * dat$exposure_primary + 0.03 * (dat$age_years - 50) +
   0.35 * (dat$sex == "Male") + 0.45 * (dat$smoking_status == "Current") +
   0.25 * (dat$region == "North")
 dat$outcome_bin <- rbinom(n, size = 1, prob = plogis(linpred))
-dat$outcome_group <- factor(dat$outcome_bin, levels = c(0, 1), labels = c("Negative", "Positive"))
-dat$infections <- rpois(n, dat$follow_up_years * exp(-1 + 0.3 * dat$exposure_primary))
-dat$severity <- factor(sample(c("None", "Mild", "Severe"), n, replace = TRUE),
-                       levels = c("None", "Mild", "Severe"))
+dat$outcome_group <- factor(
+  dat$outcome_bin,
+  levels = c(0, 1),
+  labels = c("Negative", "Positive")
+)
+dat$outcome_cont <- 2 + 0.65 * dat$exposure_primary - 0.2 * (dat$sex == "Male") + rnorm(n)
+dat$infections <- rpois(n, dat$follow_up_years * exp(-0.9 + 0.35 * dat$exposure_primary))
+dat$severity <- factor(
+  sample(c("None", "Mild", "Severe"), n, replace = TRUE, prob = c(0.60, 0.25, 0.15)),
+  levels = c("None", "Mild", "Severe")
+)
+dat$predicted_flag <- as.integer(dat$exposure_primary + rnorm(n, sd = 0.8) > 0.5)
 
+# Time-to-event outcome with proportional hazards
+hazard <- 0.015 * exp(
+  0.45 * dat$exposure_primary +
+    0.025 * (dat$age_years - 50) +
+    0.30 * (dat$sex == "Male") +
+    0.40 * (dat$smoking_status == "Current")
+)
+event_time <- rexp(n, rate = hazard)
+censor_time <- runif(n, min = 25, max = 140)
+dat$time_days <- pmin(event_time, censor_time)
+dat$event <- as.integer(event_time <= censor_time)
+
+# Introduce realistic missingness and variable labels
 dat$region[sample(seq_len(n), 15)] <- NA
 dat$smoking_status[sample(seq_len(n), 20)] <- NA
 attr(dat$exposure_primary, "label") <- "Primary exposure score"
 
-labels <- c(age_years = "Age (years)", sex = "Sex", region = "Region",
-            smoking_status = "Smoking status", bmi = "Body mass index",
-            deprivation = "Deprivation quintile")
-```
-
-## Cleaning helpers
-
-The cleaners recode survey-style values: `binaryCleaner()` maps 1/2 to 1/0,
-`continuousCleaner()` drops values below a floor, and `dateCleaner()` treats
-the REACT missing-value codes as missing.
-
-```{r cleaning}
-data.frame(
-  raw_binary = dat$binary_1_2[1:6],
-  binary = binaryCleaner(dat$binary_1_2[1:6]),
-  raw_continuous = round(dat$continuous_dirty[1:6], 2),
-  continuous = continuousCleaner(dat$continuous_dirty[1:6], floornumber = 0),
-  date = dateCleaner(dat$sample_date_chr[1:6], dateFormat = "%d/%m/%Y")
+labels <- c(
+  age_years = "Age (years)",
+  sex = "Sex",
+  region = "Region",
+  smoking_status = "Smoking status",
+  bmi = "Body mass index",
+  deprivation = "Deprivation quintile",
+  exposure_primary = "Primary exposure score"
 )
 ```
 
-## Describing the population
+## 2. Data cleaning and missingness helpers
 
-`tableOne()` summarises each variable overall and by group. With
-`statistical_test = TRUE`, the tests follow the data (Fisher's exact test for
-sparse tables, Kruskal-Wallis for medians), and `smd = TRUE` adds standardised
-mean differences.
+The cleaning functions recode survey-style sentinel values: `binaryCleaner()` maps `1`/`2`
+to `1`/`0`, `binaryCleaner_1_0()` preserves `1`/`0` while converting negative sentinel
+codes to `NA`, `continuousCleaner()` drops values below a floor, `dateCleaner()` parses dates
+while treating REACT missing codes as `NA`, `reactCleaner()` provides a unified wrapper, and
+`checkConvertNumeric()` converts numeric-looking character columns to numeric.
+
+```{r cleaning}
+cleaned_preview <- data.frame(
+  raw_1_2 = dat$binary_1_2[1:6],
+  clean_1_2 = binaryCleaner(dat$binary_1_2[1:6]),
+  raw_1_0 = dat$binary_1_0[1:6],
+  clean_1_0 = binaryCleaner_1_0(dat$binary_1_0[1:6]),
+  raw_cont = round(dat$continuous_dirty[1:6], 2),
+  clean_cont = round(continuousCleaner(dat$continuous_dirty[1:6], floornumber = 0), 2),
+  clean_date = as.character(dateCleaner(dat$sample_date_chr[1:6], dateFormat = "%d/%m/%Y"))
+)
+knitr::kable(cleaned_preview)
+
+char_df <- data.frame(
+  id_code = c("101", "102", NA, "104"),
+  category = c("low", "medium", "high", "low"),
+  stringsAsFactors = FALSE
+)
+str(checkConvertNumeric(char_df))
+```
+
+`naReporter()` summarises missing values (`NA`) and IPSOS Mori sentinel missingness codes
+(`-91`, `-92`/`-77`, `-99`) across variables in a data frame:
+
+```{r na-reporter}
+na_summary <- naReporter(
+  dat[, c("age_years", "region", "smoking_status", "binary_1_2", "binary_1_0")]
+)
+knitr::kable(na_summary)
+```
+
+## 3. Cross-tabulations and Table 1
+
+### Cross-tabulation helpers
+
+`crossTab()`, `crossTabContinuous()`, and `crossTabMulti()` build stratified descriptive
+summaries, supporting survey weights and optional confidence intervals.
+
+```{r crosstabs}
+ct_cat <- crossTab(
+  dat = dat,
+  rowvar = "smoking_status",
+  colvar = "sex",
+  include_percentages = TRUE,
+  confint = FALSE
+)
+knitr::kable(ct_cat)
+
+ct_cont <- crossTabContinuous(
+  dat = dat,
+  rowvar = "bmi",
+  colvar = "sex",
+  summary_stat = "mean"
+)
+knitr::kable(ct_cont)
+```
+
+### Descriptive Table 1 and display formatting
+
+`tableOne()` summarises continuous and categorical variables overall and by group. With
+`statistical_test = TRUE`, tests are chosen automatically (Fisher's exact test when expected
+cell counts are $< 5$, otherwise $\chi^2$; $t$-test/ANOVA for means and Wilcoxon/Kruskal-Wallis
+for medians) and recorded in `attr(x, "tests")`. Setting `smd = TRUE` adds pairwise
+standardised mean differences.
 
 ```{r table-one}
 table_one <- tableOne(
@@ -93,40 +197,92 @@ table_one <- tableOne(
   statistical_test = TRUE,
   smd = TRUE
 )
-knitr::kable(table_one, digits = 3)
+knitr::kable(table_one)
 attr(table_one, "tests")
 ```
 
-`tableOneDisplay()` turns the result into a gt table for HTML, or a flextable for Word.
+`tableOneDisplay()` converts a `tableOne()` data frame into a styled `gt` table for HTML or a
+`flextable` for Word documents:
 
 ```{r table-one-display, eval = requireNamespace("gt", quietly = TRUE)}
-tableOneDisplay(table_one, output = "gt", title = "Characteristics by outcome")
+tableOneDisplay(table_one, output = "gt", title = "Baseline characteristics by outcome")
 ```
 
-## Prevalence
+## 4. Prevalence and stratified tables
 
-`makeTablesNew()` estimates prevalence with Wilson intervals. Its defaults apply no
-assay correction; supply `sens` and `spec` to correct for test performance.
+`makeTablesNew()` estimates prevalence with Wilson score intervals. By default no assay
+correction is applied; supplying `sens` and `spec` applies the Rogan-Gladen correction.
+Setting `for_report = TRUE` returns formatted `"Prevalence (95% CI)"` strings.
 
 ```{r prevalence}
 prevalence <- makeTablesNew(
   dat = dat,
   result_var = "outcome_bin",
-  covariates = c("sex", "smoking_status"),
+  covariates = c("sex", "smoking_status", "region"),
   cov_name_list = labels,
   output_list = FALSE
 )
 knitr::kable(prevalence)
+
+prevalence_report <- makeTablesNew(
+  dat = dat,
+  result_var = "outcome_bin",
+  covariates = c("sex", "smoking_status"),
+  cov_name_list = labels,
+  sens = 0.85,
+  spec = 0.99,
+  for_report = TRUE,
+  output_list = FALSE
+)
+knitr::kable(prevalence_report)
 ```
 
-## Crude and adjusted models
+`stratifiedTables()` cross-tabulates prevalence across a stratification variable, and
+`makeStratifiedPrevalenceTablePlottable()` reshapes the result for `ggplot2`:
 
-`ModelMakerMultiRD()` fits each predictor in turn, adding adjusters one at a time.
-For a binary outcome it also gives marginal risk differences and, with
-`include_rr = TRUE`, marginal risk ratios. Every table carries Benjamini-Hochberg
-q-values within each adjustment stage.
+```{r stratified-prevalence}
+strat_prev <- stratifiedTables(
+  dat = dat,
+  result_var = "outcome_bin",
+  covariates = c("smoking_status", "region"),
+  cov_name_list = labels,
+  strat_var = "sex",
+  include_counts = FALSE
+)
+knitr::kable(strat_prev)
 
-```{r models}
+strat_plot_df <- makeStratifiedPrevalenceTablePlottable(strat_prev)
+knitr::kable(head(strat_plot_df, 6), digits = 2)
+```
+
+## 5. Single-model effect tables
+
+For an individual fitted model (`glm`, `lm`, `coxph`, etc.), `makeORTable()`, `makeRDTable()`,
+and `makeRRTable()` extract formatted odds/hazard ratios, marginal risk differences, and
+marginal risk ratios:
+
+```{r single-model}
+fit_glm <- glm(
+  outcome_bin ~ exposure_primary + smoking_status + age_years + sex,
+  family = binomial(),
+  data = dat
+)
+
+knitr::kable(makeORTable(fit_glm, dp = 2))
+knitr::kable(makeRDTable(fit_glm, variable_name = "smoking_status", data = dat, n_sim = 50, dp = 3))
+knitr::kable(makeRRTable(fit_glm, variable_name = "smoking_status", data = dat, n_sim = 50, dp = 2))
+```
+
+## 6. Sequential and batch regression models
+
+### Binary outcomes: Odds Ratios, marginal Risk Differences, and marginal Risk Ratios
+
+`ModelMakerMultiRD()` fits each variable of interest across sequential adjustment stages.
+For binary outcomes it computes odds ratios (`df_output`), marginal risk differences
+(`df_output_RDs` when `include_rd = TRUE`), marginal risk ratios (`df_output_RRs` when
+`include_rr = TRUE`), and Benjamini-Hochberg $q$-values (`Q_value`) within each adjustment stage.
+
+```{r models-binary}
 models <- ModelMakerMultiRD(
   dat = dat,
   list_of_variables_of_interest = c("exposure_primary", "smoking_status", "bmi"),
@@ -135,97 +291,301 @@ models <- ModelMakerMultiRD(
   cov_name_list = labels,
   include_rd = TRUE,
   include_rr = TRUE,
+  n_sim = 50,
   ncores = 1
 )
 knitr::kable(models$df_output)
-knitr::kable(head(models$plot_output[, c("Variable", "Category", "adjustment_label",
-                                         "OR", "Lower", "Upper", "P_value", "Q_value")]),
-             digits = 3)
+knitr::kable(
+  head(models$plot_output[, c(
+    "Variable", "Category", "adjustment_label",
+    "OR", "Lower", "Upper", "P_value", "Q_value"
+  )]),
+  digits = 3
+)
 ```
 
-The `family` argument selects other models: Poisson rates with an offset,
-risk ratios from a modified Poisson model, and ordinal or multinomial models for
-categorical outcomes.
+### Alternative GLM families: Modified Poisson, Poisson rates, and Ordinal/Multinomial
 
-```{r families}
-rates <- ModelMakerMultiRD(dat, "exposure_primary", outcome = "infections",
-                           joint_adjustment_vars = c("age_years", "sex"),
-                           family = "poisson", offset = "follow_up_years", ncores = 1)
+The `family` argument selects alternative regression models:
+
+- `family = "modified_poisson"`: Poisson regression with robust (HC0 sandwich) standard errors for direct risk ratio (`RR`) estimation.
+- `family = "poisson"` with `offset`: incidence rate ratios (`IRR`).
+- `family = "ordinal"` or `"multinomial"` (or automatic detection on multi-level factor outcomes).
+
+```{r models-families}
+mod_poisson <- ModelMakerMultiRD(
+  dat = dat,
+  list_of_variables_of_interest = c("exposure_primary", "smoking_status"),
+  outcome = "outcome_bin",
+  joint_adjustment_vars = c("age_years", "sex"),
+  cov_name_list = labels,
+  family = "modified_poisson",
+  ncores = 1
+)
+knitr::kable(mod_poisson$df_output)
+
+rates <- ModelMakerMultiRD(
+  dat = dat,
+  list_of_variables_of_interest = "exposure_primary",
+  outcome = "infections",
+  joint_adjustment_vars = c("age_years", "sex"),
+  cov_name_list = labels,
+  family = "poisson",
+  offset = "follow_up_years",
+  ncores = 1
+)
 knitr::kable(rates$df_output)
 
-severity <- ModelMakerMultiRD(dat, "smoking_status", outcome = "severity",
-                              joint_adjustment_vars = "age_years", ncores = 1)
-knitr::kable(severity$df_output)
+severity_mod <- ModelMakerMultiRD(
+  dat = dat,
+  list_of_variables_of_interest = "smoking_status",
+  outcome = "severity",
+  joint_adjustment_vars = "age_years",
+  cov_name_list = labels,
+  ncores = 1
+)
+knitr::kable(severity_mod$df_output)
 ```
 
-## Forest plots
+### Cox proportional-hazards models
 
-`plotReactForest()` takes batch results, plotting data or fitted models.
-`show_estimates = TRUE` prints each row's estimate, interval, p-value and N.
+Supplying `time` (with `family = "cox"` or `family = "auto"`) fits Cox proportional-hazards
+models via `survival::coxph()`. Outputs are labelled as hazard ratios (`HR`), `plot_output`
+records level-specific `events`, and `diagnostics` includes per-term and global Schoenfeld
+residual proportional-hazards test $p$-values (`ph_p_value` and `ph_global_p_value`).
 
-```{r forest}
+```{r models-cox}
+cox_models <- ModelMakerMultiRD(
+  dat = dat,
+  list_of_variables_of_interest = c("exposure_primary", "smoking_status", "sex"),
+  outcome = "event",
+  time = "time_days",
+  joint_adjustment_vars = c("age_years", "region"),
+  cov_name_list = labels,
+  ncores = 1
+)
+knitr::kable(cox_models$df_output)
+knitr::kable(
+  cox_models$diagnostics[, c(
+    "Variable", "stage", "adjusted_vars", "nobs", "events",
+    "ph_p_value", "ph_global_p_value"
+  )],
+  digits = 3
+)
+```
+
+## 7. Publication-ready regression tables with `modelOutputDisplay()`
+
+`modelOutputDisplay()` formats the output of `ModelMakerMultiRD()`, `ModelMakerMulti()`,
+`modelMakerSequentialRD()`, or `run_auto_tableone_regressions()` into a clean display table.
+It can return a `flextable` (for Word), a `gt` table (for HTML), or a formatted `data.frame`
+(via `output = "data.frame"`).
+
+You can choose which adjustment stages to show (`stages = "crude_and_full"`, `"all"`, or
+`"full"`), relabel stages via `stage_labels`, and append marginal risk differences
+(`include_rd = TRUE`), marginal risk ratios (`include_rr = TRUE`), $p$-values
+(`include_p = TRUE`), or Benjamini-Hochberg $q$-values (`include_q = TRUE`).
+
+```{r model-output-display-df}
+reg_table_df <- modelOutputDisplay(
+  models,
+  output = "data.frame",
+  stages = "crude_and_full",
+  stage_labels = c(
+    crude = "Unadjusted",
+    `adj_age_years+sex+region` = "Fully adjusted"
+  ),
+  include_rd = TRUE,
+  include_rr = TRUE,
+  include_p = TRUE,
+  include_q = TRUE
+)
+knitr::kable(reg_table_df)
+```
+
+For Cox models, `modelOutputDisplay()` automatically includes an `Events` column when
+`include_events = TRUE` (the default):
+
+```{r model-output-display-cox}
+cox_table_df <- modelOutputDisplay(
+  cox_models,
+  output = "data.frame",
+  stages = "crude_and_full",
+  stage_labels = c(
+    crude = "Unadjusted",
+    `adj_age_years+region` = "Adjusted for age & region"
+  ),
+  include_events = TRUE,
+  include_p = TRUE
+)
+knitr::kable(cox_table_df)
+```
+
+When `gt` or `flextable` is installed, pass `output = "gt"` or `output = "flextable"` for
+styled HTML or Word tables with grouped adjustment-stage spanners:
+
+```{r model-output-display-gt, eval = requireNamespace("gt", quietly = TRUE)}
+modelOutputDisplay(
+  models,
+  output = "gt",
+  stages = "crude_and_full",
+  include_rd = TRUE,
+  title = "Crude and adjusted associations with outcome"
+)
+```
+
+## 8. Forest plots and collinearity diagnostics
+
+### Forest plots across effect scales
+
+`plotReactForest()` accepts batch model outputs, tidy plotting data frames, single fitted
+models, or named lists of fitted models. Setting `show_estimates = TRUE` adds a right-hand
+table column printing the formatted estimate, confidence interval, $p$-value, and sample size.
+
+```{r forest-or}
 plotReactForest(
   models,
   adjustment_numbers = c(0, 3),
   adjustment_descriptions = c("Crude", "Adjusted for age, sex and region"),
   show_estimates = TRUE,
-  title = "Associations with the outcome"
+  title = "Odds ratios for binary outcome"
 )
 ```
 
-```{r forest-rd}
-plotReactForest(models, effect = "RD", adjustment_numbers = c(0, 3),
-                adjustment_descriptions = c("Crude", "Adjusted"),
-                title = "Marginal risk differences")
+Plot marginal risk differences (`effect = "RD"`) or hazard ratios from Cox models
+(`effect = "HR"`):
+
+```{r forest-rd-hr}
+plotReactForest(
+  models,
+  effect = "RD",
+  adjustment_numbers = c(0, 3),
+  adjustment_descriptions = c("Crude", "Adjusted"),
+  title = "Marginal risk differences"
+)
+
+plotReactForest(
+  cox_models,
+  effect = "HR",
+  adjustment_numbers = c(0, 2),
+  adjustment_descriptions = c("Crude", "Adjusted for age and region"),
+  show_estimates = TRUE,
+  title = "Cox proportional-hazards models"
+)
 ```
 
-Fitted models can be compared directly; each list element becomes one adjustment level.
+Fitted models can also be compared directly by passing a named list:
 
 ```{r forest-models}
 model_list <- list(
   Crude = glm(outcome_bin ~ exposure_primary + smoking_status, binomial, dat),
-  Adjusted = glm(outcome_bin ~ exposure_primary + smoking_status + age_years + sex,
-                 binomial, dat)
+  Adjusted = glm(outcome_bin ~ exposure_primary + smoking_status + age_years + sex, binomial, dat)
 )
 plotReactForest(model_list, variables = c("exposure_primary", "smoking_status"))
 ```
 
-## Automated report
+### Variance inflation factor (VIF) trajectories
 
-`run_auto_tableone_regressions()` combines the descriptive table and the models, and
-writes a short report ranking each predictor's most-adjusted association.
+`plotReactVIF()` visualises how variance inflation factors evolve across sequential adjustment
+stages to help diagnose multicollinearity:
 
-```{r report, results = "asis"}
+```{r plot-vif}
+vif_df <- data.frame(
+  Variable = rep(c("Primary exposure score", "Body mass index"), each = 4),
+  adjustment = rep(0:3, times = 2),
+  vif = c(1.00, 1.08, 1.15, 1.24, 1.00, 1.12, 1.35, 1.62)
+)
+plotReactVIF(
+  vif_df,
+  adjustment_numbers = 0:3,
+  adjustment_descriptions = c("Crude", "+ Age", "+ Sex", "+ Region")
+)
+```
+
+## 9. Automated analysis and narrative report
+
+`run_auto_tableone_regressions()` combines `tableOne()`, sequential regression modelling,
+diagnostics, and an automated markdown narrative ranking predictors by their most-adjusted
+association. Its output can also be passed directly to `modelOutputDisplay()`.
+
+```{r auto-report, results = "asis"}
 auto <- run_auto_tableone_regressions(
   dat = dat,
   outcome = "outcome_bin",
   covariates = c("age_years", "sex"),
   independent_variables = c("exposure_primary", "smoking_status", "bmi", "age_years"),
+  cov_names = labels,
   include_rd = TRUE,
+  n_sim = 30,
   ncores = 1
 )
 cat(auto$report_markdown)
 ```
 
-## Themes and palettes
+```{r auto-display}
+knitr::kable(modelOutputDisplay(auto, output = "data.frame", stages = "crude_and_full"))
+```
+
+## 10. Epidemiological and formatting utilities
+
+`calculateEpiStats()` computes classification performance metrics (accuracy, sensitivity,
+specificity, PPV, NPV, $F_1$, Matthew's correlation coefficient, likelihood ratios, and AUC)
+with exact binomial confidence intervals. `specifyDecimal()`, `pValEpiConverter()`, and
+`pvalAsterisker()` format numbers and $p$-values for tables and text.
+
+```{r epi-stats}
+epi_stats <- calculateEpiStats(
+  prediction = dat$predicted_flag,
+  outcome = dat$outcome_bin,
+  returnAllStats = TRUE
+)
+knitr::kable(epi_stats, digits = 3)
+
+p_demo <- c(0.42, 0.038, 0.004, 0.00002)
+knitr::kable(data.frame(
+  raw_p = p_demo,
+  epi_format = pValEpiConverter(p_demo),
+  asterisks = pvalAsterisker(p_demo, return_p = TRUE),
+  decimal_3sf = specifyDecimal(c(pi, exp(1), 0.0456, 12.3), k = 3)
+))
+```
+
+## 11. Themes, Imperial palettes, and export helpers
+
+`theme_react()` and `theme_mw()` pair with `scale_fill_imperial()` and `scale_color_imperial()`
+(powered by `imperial_palettes`):
 
 ```{r themes}
-ggplot(dat, aes(x = sex, y = exposure_primary, fill = sex)) +
+p_box <- ggplot(dat, aes(x = sex, y = exposure_primary, fill = sex)) +
   geom_boxplot(width = 0.6) +
   scale_fill_imperial(palette = "cool") +
   theme_react() +
-  labs(title = "theme_react() with an Imperial palette", x = NULL, y = "Primary exposure score")
+  labs(title = "theme_react() with Imperial 'cool' palette", x = NULL, y = "Primary exposure score")
+p_box
+
+ggplot(dat, aes(x = age_years, y = outcome_cont, colour = smoking_status)) +
+  geom_point(alpha = 0.45) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 0.8) +
+  scale_color_imperial(palette = "default") +
+  theme_mw() +
+  labs(title = "theme_mw() with Imperial 'default' palette", x = "Age (years)", y = "Continuous outcome")
 ```
 
-## Export
-
-Exports write to the paths you give; here, a temporary directory.
+`saveREACTtable()`, `saveREACTplot()`, `saveREACT()`, and `savePrettyExcelWorkbook()` write
+formatted outputs to disk:
 
 ```{r export}
 out_dir <- file.path(tempdir(), "overreact-vignette")
 dir.create(out_dir, showWarnings = FALSE)
+
 saveREACTtable(prevalence, outpath = out_dir, filename = "prevalence")
-savePrettyExcelWorkbook(list(`Table 1` = table_one, Prevalence = prevalence),
-                        workbookName = "tables", outpath = out_dir)
+saveREACTplot(p_box, figpath = out_dir, filename = "exposure_boxplot", width = 6, height = 4, savePDF = FALSE)
+if (requireNamespace("openxlsx", quietly = TRUE)) {
+  savePrettyExcelWorkbook(
+    list(`Table 1` = table_one, Prevalence = prevalence, Regression = reg_table_df),
+    workbookName = "tables",
+    outpath = out_dir
+  )
+}
 sort(list.files(out_dir))
 ```

@@ -44,3 +44,18 @@ test_that("plotReactForest can print each row's estimate, interval, p and N", {
                                estimate_adjustment = 0), "not among the plotted")
   expect_s3_class(plotReactForest(glm(y ~ x + grp, binomial, dat), show_estimates = TRUE), "ggplot")
 })
+
+test_that("plotReactVIF connects trajectories and applies the Imperial colour scale", {
+  vif_df <- data.frame(
+    Variable = rep(c("Age", "BMI"), each = 3),
+    adjustment = rep(c(0L, 1L, 2L), 2),
+    vif = c(1.0, 1.4, 1.8, 1.0, 1.2, 2.1)
+  )
+  p <- plotReactVIF(vif_df, adjustment_numbers = c(0, 1, 2),
+                    adjustment_descriptions = c("Crude", "+ Sex", "+ Region"))
+  expect_s3_class(p, "ggplot")
+  built <- ggplot2::ggplot_build(p)
+  line_data <- built$data[[which(vapply(p$layers, function(l) inherits(l$geom, "GeomLine"), logical(1)))]]
+  expect_equal(unique(line_data$group), 1L)
+  expect_equal(nrow(line_data), 6L)
+})

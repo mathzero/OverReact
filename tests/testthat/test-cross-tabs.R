@@ -52,3 +52,19 @@ test_that("crossTabMulti summarises classed numeric columns as continuous", {
   expect_identical(out$a, "2.5 (1.29)")
   expect_error(crossTabMulti(dat, character(), "g"), "at least one variable")
 })
+
+test_that("crossTab supports colvar_levels and makeXtabPlottable handles mixed tables", {
+  dat <- data.frame(y = c("n", "y", "y", "n"), g = c("a", "a", "b", "b"), age = c(20, 30, 40, 50))
+  xt <- crossTab(dat, "y", "g", rowvar_levels = c("No", "Yes"), colvar_levels = c("Group A", "Group B"),
+                 confint = FALSE)
+  expect_named(xt, c("Category", "Group A", "Group B", "Total"))
+  expect_identical(xt$Category, c("No", "Yes", "Total"))
+
+  expect_equal(xtabPercentageExtractor("10 (50.0%)"), 50)
+  expect_equal(xtabPercentageExtractor("10 (50.0%, [20.0-80.0])"), 50)
+
+  mixed <- suppressMessages(crossTabMulti(dat, c("age", "y"), "g", confint = TRUE))
+  expect_no_warning(plottable <- makeXtabPlottable(mixed))
+  expect_true(all(is.na(plottable$value[plottable$Category == "Mean (SD)"])))
+  expect_true(all(!is.na(plottable$value[plottable$Category %in% c("n", "y")])))
+})

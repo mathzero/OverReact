@@ -284,3 +284,21 @@ test_that("tests and SMDs are reported only where they are defined", {
   expect_false(any(trimws(shown$SMD) %in% c("NA", "NaN")))
   expect_identical(shown$SMD[shown$Characteristic == "const, mean (SD)"], "")
 })
+
+test_that("categorical SMD is NA under complete separation and SMD is a reserved column name", {
+  sep <- data.frame(
+    g = factor(rep(c("A", "B"), each = 10)),
+    cat = factor(rep(c("x", "y"), each = 10))
+  )
+  out_sep <- suppressMessages(tableOne(sep, "cat", "g", smd = TRUE, addNobsTopRow = FALSE))
+  expect_true(is.na(out_sep$SMD[1]))
+  expect_equal(OverReact:::.smd_categorical(c(0.5, 0.5), c(0.5, 0.5)), 0)
+
+  # Group level literally named "SMD" does not collide with the SMD column.
+  smd_grp <- data.frame(
+    g = factor(rep(c("Control", "SMD"), each = 10), levels = c("Control", "SMD")),
+    v = rnorm(20)
+  )
+  out_smd <- suppressMessages(tableOne(smd_grp, "v", "g", smd = TRUE))
+  expect_true(all(c("Control", "SMD.1", "SMD") %in% names(out_smd)))
+})

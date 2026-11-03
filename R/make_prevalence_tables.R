@@ -214,24 +214,37 @@ stratifiedTables <- function(dat,
                              include_counts=FALSE,
                              separator=","){
 
-  if(inherits(dplyr::pull(dat, strat_var), "factor")){
-    uniques=levels(pull(dat, strat_var))
+  s_col <- dplyr::pull(dat, strat_var)
+  if(inherits(s_col, "factor")){
+    uniques <- levels(droplevels(s_col))
   }else{
-    uniques <- unique(pull(dat, strat_var))[!is.na(unique(pull(dat, strat_var)))] %>% as.character()
+    uniques <- as.character(unique(s_col[!is.na(s_col)]))
   }
   result_list <- list()
 
   for (i in seq_along(uniques)){
-    prevs <- makeTablesNew(dat=dat[dat[,strat_var]== uniques[[i]],],
+    idx <- which(!is.na(s_col) & as.character(s_col) == uniques[[i]])
+    sub_dat <- dat[idx, , drop = FALSE]
+    res_vals <- as.character(dplyr::pull(sub_dat, result_var))
+    if (!any(!is.na(res_vals) & res_vals %in% c(as.character(pos_val), as.character(neg_val)))) {
+      message("No valid outcome observations in stratum '", uniques[[i]], "' - skipping.")
+      next
+    }
+    prevs <- makeTablesNew(dat = sub_dat,
                            result_var = result_var, pos_val = pos_val, neg_val = neg_val,
                            covariates = covariates,
                            sens = sens,spec = spec, cov_name_list = cov_name_list,
                            output_list = FALSE, sf = sf, weights = weights, percent = percent,
-                           separator = separator)
-    prevs$prev_concat <- paste0(prevs$Prevalence," (",prevs$Lower,separator, prevs$Upper,")")
-    result_list[[i]] <- prevs
+                           for_report = FALSE, separator = separator)
+    if (isTRUE(for_report)) {
+      prevs$prev_concat <- paste0(specifyDecimal(prevs$Prevalence, sf), " (",
+                                  specifyDecimal(prevs$Lower, sf), separator,
+                                  specifyDecimal(prevs$Upper, sf), ")")
+    } else {
+      prevs$prev_concat <- paste0(prevs$Prevalence," (",prevs$Lower,separator, prevs$Upper,")")
+    }
+    result_list[[uniques[[i]]]] <- prevs
   }
-  names(result_list) <- uniques
   if(include_counts){
     res <- dplyr::bind_rows(result_list, .id = "Level") %>% dplyr::select(Level, Variable,Positive, Total,
                                                                           Category,prev_concat) %>%
@@ -252,6 +265,15 @@ stratifiedTables <- function(dat,
 
   }
 
+  if (isTRUE(write_to_file)) {
+    fname <- if (!is.null(suffix)) {
+      paste0("stratified_by_", strat_var, "_prev_", suffix, ".csv")
+    } else {
+      paste0("stratified_by_", strat_var, "_prev.csv")
+    }
+    write.csv(res, fname, row.names = FALSE)
+  }
+
   return(res)
 }
 
@@ -266,6 +288,13 @@ stratifiedTables <- function(dat,
 
 add_conf_ints <- function(tab,method="wilson",poscol="Detected",negcol="Not Detected",
                           spec = 1, sens = 1) {
+  if (!is.numeric(sens) || length(sens) != 1L || is.na(sens) || sens < 0 || sens > 1 ||
+      !is.numeric(spec) || length(spec) != 1L || is.na(spec) || spec < 0 || spec > 1) {
+    stop("`sens` and `spec` must be single numbers between 0 and 1.")
+  }
+  if (sens + spec <= 1) {
+    stop("`sens + spec` must be greater than 1 for Rogan-Gladen prevalence adjustment.")
+  }
 
   #browser()
   rtn <- tab

@@ -183,14 +183,27 @@ makeORTable <- function(mod, ref_level = NULL, dp = 3) {
   }
 
   exposure <- data[[variable_name]]
-  # 1) factor exposure ---------------------------------------------------------
-  if (is.factor(exposure) || is.character(exposure)) {
+  # 1) factor, character, or logical exposure ----------------------------------
+  if (is.factor(exposure) || is.character(exposure) || is.logical(exposure)) {
+    is_lgl <- is.logical(exposure)
     lvls <- mod$xlevels[[variable_name]]
-    if (is.null(lvls)) lvls <- levels(factor(exposure))
-    if (is.null(ref_level) || !(ref_level %in% lvls)) ref_level <- lvls[1]
+    if (is.null(lvls)) {
+      lvls <- if (is_lgl) {
+        intersect(c("FALSE", "TRUE"), as.character(unique(stats::na.omit(exposure))))
+      } else {
+        levels(factor(exposure))
+      }
+    }
+    if (!length(lvls)) return(na_tbl)
+    if (is.null(ref_level) || !(as.character(ref_level) %in% lvls)) ref_level <- lvls[1]
+    ref_level <- as.character(ref_level)
     set_level <- function(lvl) {
       nd <- data
-      nd[[variable_name]] <- factor(rep(lvl, nrow(nd)), levels = lvls)
+      nd[[variable_name]] <- if (is_lgl && is.null(mod$xlevels[[variable_name]])) {
+        rep(as.logical(lvl), nrow(nd))
+      } else {
+        factor(rep(lvl, nrow(nd)), levels = lvls)
+      }
       nd
     }
     X_ref <- get_X(set_level(ref_level))
@@ -324,8 +337,19 @@ modelMakerSequentialRD <- function(variable_name,
 
   # Inject a [reference] row for categorical exposures if missing
   lvls <- tryCatch(mod$xlevels[[variable_name]], error = function(e) NULL)
-  if (!is.null(lvls)) {
-    if (is.null(ref_level) || !(ref_level %in% lvls)) ref_level <- lvls[1]
+  if (is.null(lvls)) {
+    mf <- if (!is.null(data)) data else tryCatch(stats::model.frame(mod), error = function(e) NULL)
+    if (!is.null(mf) && variable_name %in% names(mf)) {
+      x_col <- mf[[variable_name]]
+      if (is.logical(x_col)) {
+        lvls <- intersect(c("FALSE", "TRUE"), as.character(unique(stats::na.omit(x_col))))
+      } else if (is.factor(x_col) || is.character(x_col)) {
+        lvls <- levels(factor(x_col))
+      }
+    }
+  }
+  if (!is.null(lvls) && length(lvls)) {
+    if (is.null(ref_level) || !(as.character(ref_level) %in% lvls)) ref_level <- lvls[1]
     if (!any(grepl("\\[reference\\]$", out$Level))) {
       ref_row <- out[1, , drop = FALSE]
       ref_row$Level <- paste0(ref_level, " [reference]")
@@ -359,11 +383,17 @@ build_cumulative_sets <- function(adj_vars) {
 
 # Stage numbers shared by every predictor. With incremental sets, stage k is the model
 # adjusted for the first k joint adjusters, so a predictor removed from its own sets skips
-# its position instead of shifting every later stage; named sets are numbered in order.
+# its position instead of shifting every later stage; the final set always shares the
+# fully-adjusted stage number length(joint_adjustment_vars). Named sets are numbered in order.
 .react_stage_numbers <- function(sets, joint_adjustment_vars, incremental) {
+  if (!length(sets)) return(integer(0))
   if (!isTRUE(incremental)) return(seq_along(sets))
-  vapply(sets, function(s) {
-    if (!length(s)) return(max(1L, length(joint_adjustment_vars)))
+  n_sets <- length(sets)
+  n_adj <- max(1L, length(joint_adjustment_vars))
+  vapply(seq_len(n_sets), function(i) {
+    if (i == n_sets) return(n_adj)
+    s <- sets[[i]]
+    if (!length(s)) return(n_adj)
     match(s[[length(s)]], joint_adjustment_vars)
   }, integer(1), USE.NAMES = FALSE)
 }
@@ -505,9 +535,11 @@ compute_level_order <- function(x, ref_level = NULL) {
 
 
 .sanitize_var_id <- function(x) {
-  x <- gsub("[^A-Za-z0-9._-]+", "_", x)
-  x <- gsub("_+", "_", x)
-  x
+  vapply(as.character(x), function(v) {
+    clean <- gsub("[^A-Za-z0-9._-]+", "_", v)
+    clean <- gsub("_+", "_", clean)
+    if (identical(clean, v)) clean else paste0(clean, "_", substr(rlang::hash(v), 1L, 8L))
+  }, character(1), USE.NAMES = FALSE)
 }
 
 .safe_dir_create <- function(path) {
@@ -699,8 +731,8 @@ modelMakerAdjustedSetsRD <- function(variable_name,
     stop("variable_name or outcome not found in `data`.")
   }
 
-  if (length(adj_sets) == 0L) adj_sets <- list(full = character(0))
-  if (is.null(names(adj_sets)) || any(!nzchar(names(adj_sets)))) {
+  if (length(adj_sets) == 0L && !isTRUE(include_crude)) adj_sets <- list(full = character(0))
+  if (length(adj_sets) > 0L && (is.null(names(adj_sets)) || any(!nzchar(names(adj_sets))))) {
     names(adj_sets) <- if (length(adj_sets) == 1L) "full" else paste0("set", seq_along(adj_sets))
   }
 
@@ -876,6 +908,21 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   list_of_variables_of_interest <- unique(list_of_variables_of_interest)
   if (length(list_of_variables_of_interest) == 0) stop("No variables to analyse")
 
+  if (isTRUE(incremental) || is.null(adj_sets)) {
+    missing_adj <- setdiff(joint_adjustment_vars, names(dat))
+    if (length(missing_adj)) {
+      warning("Adjustment variables not found in data: ", paste(missing_adj, collapse = ", "))
+    }
+    joint_adjustment_vars <- intersect(joint_adjustment_vars, names(dat))
+  } else {
+    used_adj <- unique(unlist(adj_sets, use.names = FALSE))
+    missing_adj <- setdiff(used_adj, names(dat))
+    if (length(missing_adj)) {
+      warning("Adjustment variables not found in data: ", paste(missing_adj, collapse = ", "))
+    }
+    adj_sets <- lapply(adj_sets, intersect, names(dat))
+  }
+
   spec <- .react_resolve_family(dat[[outcome]], family = family, outcome = outcome, time = time)
   .react_check_offset(offset, spec, dat)
   .react_check_time(time, spec, dat)
@@ -901,9 +948,13 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
   sets_for <- function(pred_name) {
     pred_adjusters <- setdiff(joint_adjustment_vars, pred_name)
     if (isTRUE(incremental)) {
+      if (!length(joint_adjustment_vars) && isTRUE(include_crude)) return(list())
       build_cumulative_sets(pred_adjusters)
     } else {
-      if (is.null(adj_sets)) list(full = pred_adjusters) else {
+      if (is.null(adj_sets)) {
+        if (!length(joint_adjustment_vars) && isTRUE(include_crude)) return(list())
+        list(full = pred_adjusters)
+      } else {
         sets_local <- adj_sets
         if (is.list(sets_local) && is.null(names(sets_local))) {
           names(sets_local) <- if (length(sets_local) == 1L) "full" else paste0("set", seq_along(sets_local))
@@ -995,13 +1046,15 @@ ModelMakerMultiRD <- function(dat, list_of_variables_of_interest, outcome = "res
       if (is.null(res)) return(TRUE)
       for (m in c("OR", marginal)) {
         if (isTRUE(include_crude) && !has_rows(res[[paste0("crude_model_", m)]])) return(TRUE)
-        adjusted <- res[[paste0("adj_", tolower(m), "_outputs")]]
-        if (!all(names(sets) %in% names(adjusted)[vapply(adjusted, has_rows, logical(1))])) return(TRUE)
+        if (length(sets)) {
+          adjusted <- res[[paste0("adj_", tolower(m), "_outputs")]]
+          if (!all(names(sets) %in% names(adjusted)[vapply(adjusted, has_rows, logical(1))])) return(TRUE)
+        }
       }
       FALSE
     }
 
-    need_retry <- isTRUE(retry_failed) && has_gaps(a1$res) && max_retries >= 1L
+    need_retry <- isTRUE(retry_failed) && identical(spec$engine, "glm") && has_gaps(a1$res) && max_retries >= 1L
     if (need_retry) {
       message("Retrying variable '", pred_name, "' with stricter glm.control ...")
       ctrl2 <- glm_control
